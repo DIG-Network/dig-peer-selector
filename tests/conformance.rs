@@ -670,6 +670,41 @@ fn sel_02_registry_churn_and_bounds() {
     assert_eq!(snap.connection_class.as_deref(), Some("relayed"));
 }
 
+/// #179 HIGH finding 1 (in_flight accounting asymmetry) — end-to-end via the public engine API.
+/// `select` dispatches (bumps `in_flight` by the peer's full headroom, SPEC §5.3) for a stream of
+/// unique cold candidates that never report an outcome (an attacker feeding unverified DHT/PEX hints
+/// that go silent post-dispatch). Every fed candidate is force-included via anti-starvation coverage
+/// over enough rounds, so without the fix `in_flight` never returns to `0` and the registry grows past
+/// its capacity bound (SPEC §2.5). With the fix (TTL reclamation + force-eviction fallback), the
+/// registry MUST stay bounded at `registry_capacity` regardless of how many silent peers are fed.
+#[test]
+fn sel_02_dispatch_then_silence_stays_within_capacity_bound() {
+    let capacity = 8usize;
+    let cfg = SelectorConfig {
+        registry_capacity: capacity,
+        ..SelectorConfig::deterministic(1000, 7)
+    };
+    let sel = PeerSelector::new(cfg);
+
+    // Feed far more unique cold peer_ids than capacity, each selected (and thus dispatched — in_flight
+    // bumped) and NEVER given a matching record_outcome (the peer went silent after being dispatched).
+    let n = capacity as u8 * 5;
+    for b in 0..n {
+        let _ = sel.select(&ContentRequest::new(content(), 3), &[candidate(b)]);
+        assert!(
+            sel.registry_size() <= capacity,
+            "registry must stay bounded at {capacity} after feeding {} silent dispatched peers; got {}",
+            b + 1,
+            sel.registry_size()
+        );
+    }
+    assert!(
+        sel.registry_size() <= capacity,
+        "final registry size {} must not exceed capacity {capacity}",
+        sel.registry_size()
+    );
+}
+
 // ---- SEL-07 — the dig-download loop contract (verification is a hard penalty; pause not a failure) -
 
 #[test]

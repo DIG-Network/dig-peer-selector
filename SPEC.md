@@ -182,9 +182,20 @@ peer's identity is the mTLS handshake that `dig-nat` completed (§9.1). Addresse
 
 The registry MUST be bounded (a capacity in `SelectorConfig`, a pure resource limit, not a behavior
 knob). When over capacity the selector evicts the **lowest-value** entries first, where value
-combines staleness (`last_outcome_at` age) and learned quality — never evicting a currently-connected
-peer or one with a range in flight. Eviction of a peer's entry discards its learned quality; a
-re-learned peer starts cold again. Eviction MUST NOT be observable as a behavior knob.
+combines staleness (`last_outcome_at` age) and learned quality, PREFERRING never to evict a
+currently-connected peer or one with a range in flight. Eviction of a peer's entry discards its
+learned quality; a re-learned peer starts cold again. Eviction MUST NOT be observable as a behavior
+knob.
+
+**The capacity bound is a HARD limit, not merely a preference.** A dispatch whose outcome never
+arrives (the peer went silent post-dispatch) MUST NOT be able to pin an entry as permanently
+unevictable: an unsettled `in_flight` count is reclaimed after a bounded dispatch TTL (§5.3), and if,
+after reclamation, every remaining entry is still connected or in-flight, capacity enforcement MUST
+fall back to evicting the lowest-value **non-connected** entry regardless of its `in_flight` count. A
+currently-connected live link is the only thing eviction may never touch; everything else is subject
+to the bound. This closes the resource-bound bypass an attacker could otherwise trigger by feeding a
+stream of unique cold `peer_id`s that are dispatched to (via exploration / anti-starvation forced
+coverage, §4.4-E) and then never report an outcome.
 
 ---
 
@@ -422,6 +433,15 @@ this MAY be implicit (a `SelectedPeer` in a `Selection` is counted dispatched, a
 `record_outcome` decrements) or explicit via `on_dispatch(peer_id, range)` / the settling
 `record_outcome`. The crate fixes the mechanism; the *invariant* is that `in_flight` reflects reality
 so §4.4-B holds.
+
+**Dispatches are TTL-reclaimed, not just decremented.** A dispatch bump MAY exceed the count a
+matching `record_outcome` releases (e.g. a peer is dispatched `max_concurrency` ranges' worth of
+headroom in one `select` but only ever reports outcomes one at a time, or an outcome never arrives at
+all because the peer went silent). The selector MUST NOT let such an imbalance leave `in_flight`
+permanently stuck above `0`: it stamps the wall-clock time `in_flight` last rose from `0` and, on each
+`select`/`rebalance`, reclaims (zeros) `in_flight` for any entry whose dispatch has aged past a bounded
+TTL without settling. This is what keeps §2.5's capacity bound genuinely enforceable rather than
+gameable by an attacker who dispatches to a peer and then never reports back.
 
 ### 5.4 Registry-feed hooks
 

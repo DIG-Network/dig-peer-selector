@@ -100,7 +100,7 @@ impl PeerSelector {
         for c in candidates {
             inner.registry.upsert_candidate(c, Provenance::Dht, now);
         }
-        self.select_over(&mut inner, req, &candidate_ids(candidates), &[])
+        self.select_over(&mut inner, req, &candidate_ids(candidates), &[], now)
     }
 
     /// **`rebalance`** — re-query the up-to-the-moment models for still-needed ranges (SPEC §5.5).
@@ -115,6 +115,7 @@ impl PeerSelector {
         active: &[PeerId],
         need: &RangePlanDelta,
     ) -> Selection {
+        let now = self.now();
         let mut inner = self.inner.lock().expect("selector mutex poisoned");
         // The still-needed count drives how much parallelism to fill.
         let want = need.len().max(1);
@@ -130,7 +131,7 @@ impl PeerSelector {
             .filter(|e| e.is_eligible())
             .map(|e| e.peer_id)
             .collect();
-        self.select_over(&mut inner, &effective, &pool, active)
+        self.select_over(&mut inner, &effective, &pool, active, now)
     }
 
     /// Core selection over an explicit candidate-id `pool`, de-ranking `deranked` peers. Shared by
@@ -141,7 +142,11 @@ impl PeerSelector {
         req: &ContentRequest,
         pool: &[PeerId],
         deranked: &[PeerId],
+        now: u64,
     ) -> Selection {
+        // Reclaim any dispatch whose outcome never arrived before scoring (#179 finding 1): a peer
+        // dispatched to and then gone silent must not keep counting as busy / unevictable forever.
+        inner.registry.reclaim_stale_in_flight(now);
         if pool.is_empty() {
             return Selection::empty();
         }
@@ -335,7 +340,7 @@ impl PeerSelector {
                 .unwrap_or(0);
             inner
                 .registry
-                .add_in_flight(&sp.peer_id, sp.max_concurrency);
+                .add_in_flight(&sp.peer_id, sp.max_concurrency, now);
             // Record dispatch context for the range indices this peer will serve. We do not know exact
             // indices here, so key by a rolling per-peer marker; the outcome's own range index keys
             // the lookup and falls back to the peer's recorded context.
@@ -457,8 +462,9 @@ impl PeerSelector {
     /// already accounts the dispatch it returns; the host uses this only if it dispatches outside a
     /// `select` result.
     pub fn on_dispatch(&self, peer: &PeerId, count: u32) {
+        let now = self.now();
         let mut inner = self.inner.lock().expect("selector mutex poisoned");
-        inner.registry.add_in_flight(peer, count);
+        inner.registry.add_in_flight(peer, count, now);
     }
 
     // ---- Read-only observability (SPEC §5.7) ------------------------------------------------
