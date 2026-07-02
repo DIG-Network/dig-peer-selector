@@ -242,6 +242,23 @@ pub struct ScoredPeer {
     pub tie_break: u64,
 }
 
+/// Test-only call counter for [`score_peer`] (#179 LOW finding: `select`/`rebalance` must score each
+/// pooled peer at most ONCE per call, not twice via a separate `proven_score_bounds` pass). Never read
+/// or incremented outside `cfg(test)` — zero cost in production.
+///
+/// This is process-global, so `cargo test`'s default parallel test threads all increment the same
+/// counter — a test measuring it MUST serialize via [`SCORE_PEER_CALLS_LOCK`] and read a *delta*
+/// across the measured operation, never an absolute value, or concurrent tests calling `score_peer`
+/// (any scoring test in this crate) will make the count flaky.
+#[cfg(test)]
+pub(crate) static SCORE_PEER_CALLS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// Serializes access to [`SCORE_PEER_CALLS`] across test threads so a delta measurement is not
+/// polluted by a concurrently-running test's `score_peer` calls.
+#[cfg(test)]
+pub(crate) static SCORE_PEER_CALLS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Compute a peer's **effective score** and its exploratory flag against the learned models
 /// (SPEC §4.4). Higher score = preferred. This is a pure function of the entry's measured quality +
 /// the learned saturation/relay models — no self-reported input can raise it (SPEC §9.2).
@@ -260,6 +277,8 @@ pub fn score_peer(
     relay: &RelayModel,
     exploration_bonus: f64,
 ) -> ScoredPeer {
+    #[cfg(test)]
+    SCORE_PEER_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let q = &entry.quality;
     let class = PeerClass::of(entry.connection_class);
     let sat_point = saturation.saturation_point(class);

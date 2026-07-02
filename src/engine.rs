@@ -168,12 +168,33 @@ impl PeerSelector {
             return Selection::empty();
         }
 
+        // Score every eligible pooled peer ONCE (#179 LOW finding: a separate `proven_score_bounds`
+        // pre-pass used to re-score every non-cold peer before this loop scored everyone again,
+        // doubling score_peer calls on the hot decision path). Score with bonus=0 first — a cold
+        // peer's `effective_score` under `score_peer` is exactly the bonus and nothing else depends on
+        // it (headroom/exploratory/tie_break are bonus-independent, SPEC §4.4-E), so the proven-score
+        // bounds can be derived from this single pass and the bonus applied to cold entries afterward.
+        let mut scored: Vec<(PeerId, ScoredPeer)> = Vec::with_capacity(pool.len());
+        for id in pool {
+            let Some(entry) = inner.registry.get(id) else {
+                continue;
+            };
+            if !entry.is_eligible() {
+                continue;
+            }
+            scored.push((*id, score_peer(entry, &inner.saturation, &inner.relay, 0.0)));
+        }
+        if scored.is_empty() {
+            return Selection::empty();
+        }
+
         // Exploration bonus: a cold peer scores just ABOVE the worst proven peer (so it gets tried)
         // but strictly BELOW the best proven peer (so it never displaces a proven fast peer for the
         // bulk of a transfer — SPEC §4.4-E). We place it a small fraction of the proven-score gap
         // above the worst; when there are no proven peers (all-cold pool) the bonus is 0 and cold
-        // peers simply order among themselves.
-        let (worst_proven, best_proven) = proven_score_bounds(inner, pool);
+        // peers simply order among themselves. Derived from the single scored pass above (skipping
+        // cold/bad-source entries, both identifiable from the already-computed `ScoredPeer`s).
+        let (worst_proven, best_proven) = proven_score_bounds(&scored);
         let exploration_bonus = if best_proven > worst_proven {
             // A quarter of the way up from worst to best: above the worst proven peer, below the best.
             worst_proven + 0.25 * (best_proven - worst_proven)
@@ -184,26 +205,18 @@ impl PeerSelector {
             0.0
         };
 
-        // Score every eligible pooled peer.
-        let mut scored: Vec<(PeerId, ScoredPeer)> = Vec::with_capacity(pool.len());
-        for id in pool {
-            let Some(entry) = inner.registry.get(id) else {
-                continue;
-            };
-            if !entry.is_eligible() {
-                continue;
+        // Apply the now-known bonus to every cold (exploratory) entry — this is the only field a
+        // cold peer's score depends on (SPEC §4.4-E) — then the SPEC §5.5 de-rank pass for `rebalance`.
+        for (id, s) in &mut scored {
+            if s.exploratory {
+                s.effective_score = exploration_bonus;
             }
-            let mut s = score_peer(entry, &inner.saturation, &inner.relay, exploration_bonus);
             // De-rank an already-active peer: shrink its headroom to reflect that it is busy, and
             // discount its score so a replacement is preferred (SPEC §5.5).
             if deranked.contains(id) {
                 s.effective_score *= DERANK_FACTOR;
                 s.headroom = s.headroom.saturating_sub(1);
             }
-            scored.push((*id, s));
-        }
-        if scored.is_empty() {
-            return Selection::empty();
         }
 
         // Advance the epoch (this select/rebalance) for anti-starvation exploration coverage.
@@ -536,22 +549,24 @@ fn explore_slots(want: usize) -> usize {
     want.div_ceil(3).max(1)
 }
 
-/// The worst + best *proven* (non-cold, non-bad) effective score among the pool, so the exploration
-/// bonus sits just above the worst proven peer (SPEC §4.4-E). Returns `(0.0, 0.0)` when there are no
-/// proven peers (an all-cold pool) — exploration then simply orders cold peers among themselves.
-fn proven_score_bounds(inner: &Inner, pool: &[PeerId]) -> (f64, f64) {
+/// The worst + best *proven* (non-cold, non-bad) effective score among an already-scored pool, so the
+/// exploration bonus sits just above the worst proven peer (SPEC §4.4-E). Returns `(0.0, 0.0)` when
+/// there are no proven peers (an all-cold pool) — exploration then simply orders cold peers among
+/// themselves.
+///
+/// Takes the pool's `ScoredPeer`s (scored with `exploration_bonus=0.0`) rather than re-scoring from
+/// the registry (#179 LOW finding) — a proven (non-cold, non-bad-source) peer's score does not depend
+/// on the exploration bonus at all (SPEC §4.4: the bonus only ever appears in the cold branch), so
+/// scoring once and filtering is equivalent to the old two-pass approach, at half the `score_peer`
+/// calls.
+fn proven_score_bounds(scored: &[(PeerId, ScoredPeer)]) -> (f64, f64) {
     let mut worst = f64::INFINITY;
     let mut best = f64::NEG_INFINITY;
     let mut any = false;
-    for id in pool {
-        let Some(entry) = inner.registry.get(id) else {
-            continue;
-        };
-        if entry.quality.is_cold() || !entry.is_eligible() {
-            continue;
+    for (_, s) in scored {
+        if s.exploratory {
+            continue; // cold — not a "proven" bound
         }
-        // Score with a zero exploration bonus (proven peers ignore it).
-        let s = score_peer(entry, &inner.saturation, &inner.relay, 0.0);
         if s.effective_score <= -1.0e11 {
             continue; // a bad source floor — not a "proven good" bound
         }
@@ -598,4 +613,71 @@ fn apply_outcome_to_quality(
 /// The `peer_id`s of a candidate slice (dispatch pool for `select`).
 fn candidate_ids(candidates: &[Candidate]) -> Vec<PeerId> {
     candidates.iter().map(|c| c.peer_id).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::SelectorConfig;
+    use crate::scoring::{SCORE_PEER_CALLS, SCORE_PEER_CALLS_LOCK};
+    use crate::types::{Candidate, OutcomeKind, OutcomeResult, TransferOutcome};
+    use dig_dht::{CandidateAddr, ContentId};
+    use std::sync::atomic::Ordering;
+
+    fn pid(b: u8) -> PeerId {
+        PeerId::from_bytes([b; 32])
+    }
+    fn candidate(b: u8) -> Candidate {
+        Candidate::new(pid(b), vec![CandidateAddr::direct("10.0.0.1", 9444)])
+    }
+    fn content() -> ContentId {
+        ContentId::store([0x77; 32])
+    }
+
+    /// #179 LOW finding (select/rebalance double-scores the pool): a single `select` call must invoke
+    /// `score_peer` AT MOST ONCE per eligible pooled peer. The old `proven_score_bounds` pre-pass
+    /// re-scored every non-cold peer before the main scoring loop scored everyone again, doubling the
+    /// work for a mixed cold/proven pool on the hot decision path (rebalance can run over up to ~4096
+    /// eligible entries on every dropped source mid-transfer).
+    #[test]
+    fn select_scores_each_pooled_peer_at_most_once() {
+        let sel = PeerSelector::new(SelectorConfig::deterministic(1000, 5));
+        // Warm several peers to "proven" (non-cold) status so the old pre-pass had work to do.
+        for b in 0..5u8 {
+            for i in 0..3u64 {
+                sel.record_outcome(&TransferOutcome {
+                    peer_id: pid(b),
+                    content: content(),
+                    kind: OutcomeKind::Range {
+                        index: i as usize,
+                        offset: 0,
+                        length: 1000,
+                    },
+                    result: OutcomeResult::Success,
+                    bytes: 100_000,
+                    duration_ms: 1000,
+                    rtt_ms: Some(10),
+                    at: 1000 + i,
+                });
+            }
+        }
+        // Mix in a couple of fresh cold candidates too (a realistic mixed pool).
+        let candidates: Vec<Candidate> = (0..7u8).map(candidate).collect();
+
+        // SCORE_PEER_CALLS is process-global (shared across cargo test's parallel threads): serialize
+        // via the dedicated lock and measure a delta across just the `select` call, so a concurrently
+        // running test's own `score_peer` calls cannot pollute this measurement.
+        let _guard = SCORE_PEER_CALLS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let before = SCORE_PEER_CALLS.load(Ordering::SeqCst);
+        let _ = sel.select(&ContentRequest::new(content(), 3), &candidates);
+        let calls = SCORE_PEER_CALLS.load(Ordering::SeqCst) - before;
+        assert!(
+            calls <= candidates.len() as u64,
+            "score_peer must run at most once per pooled peer ({} peers), got {calls} calls \
+             (a separate proven-bounds pre-pass would double-count the non-cold ones)",
+            candidates.len()
+        );
+    }
 }
