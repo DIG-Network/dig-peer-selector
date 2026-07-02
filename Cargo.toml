@@ -1,0 +1,67 @@
+# dig-peer-selector — the self-optimizing peer-selection middleware of the DIG Node.
+#
+# The selector is a pure DECISION + LEARNING layer. It sits between `dig-download` (the executor that
+# fetches bytes over dig-nat mTLS) and the peer-discovery layers (`dig-dht`, `dig-gossip`/`dig-pex`,
+# `dig-nat`), and answers one question — "of these candidate peers, which subset should serve this
+# content, and in what order?" — learning the answer from the REAL, MEASURED outcome of every transfer
+# it influenced. It opens no socket, runs no discovery, and exposes NO user-facing behavior knobs
+# (SPEC.md §1.5): every tradeoff (saturation point, relayed penalty, decay) is self-tuned from
+# observed data.
+#
+# Dependency philosophy (mirrors dig-dht / dig-pex): keep the tree SMALL. The selector re-uses the
+# transport-verified peer identity (`peer_id = SHA-256(TLS SPKI DER)`) and the candidate/content types
+# from the sibling crates rather than redefining parallel copies (SPEC.md §5, §11):
+#   - `dig-nat`  → `PeerId`, `TraversalKind` (the connection class it reads, observationally).
+#   - `dig-dht`  → `ContentId`, `ProviderRecord`, `CandidateAddr`, `AddressKind` (the candidate feed).
+#   - `dig-gossip` → `PoolEvent` / `PoolRemovalReason` (the topology/churn feed, consumed VERBATIM per
+#     SPEC §5.4 — the selector MUST NOT redefine the event type).
+# It deliberately does NOT depend on `dig-download` for types the loop expresses structurally
+# (`TransferOutcome`/`Selection` are defined here), so there is no dependency cycle — the
+# DownloadEvent→record_outcome mapping lives in the host adapter (dig-node), not this crate (SPEC §11).
+#
+# Sourcing: like the sibling crates, the DIG dependencies are not yet on crates.io, so they resolve
+# from the DIG-Network git repos (bare `git` form so the standalone CI checkout and the superproject
+# build agree). `version = "0.1"` is what `cargo publish` records. RELEASE ORDERING (ecosystem rule:
+# release-first for shared contracts): dig-nat, dig-dht and dig-gossip must be published to crates.io
+# — and these `git` sources swapped for the plain crates.io versions — BEFORE dig-peer-selector is
+# published; `cargo publish` rejects a git dependency, so the publish workflow enforces this. The
+# orchestrator sequences the release tags.
+[package]
+name = "dig-peer-selector"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75.0"
+license = "Apache-2.0 OR MIT"
+description = "Self-optimizing peer-selection middleware for the DIG Node — the pure decision + learning layer between dig-download and the discovery layers (dig-dht / dig-gossip / dig-nat). Maintains a dynamic peer registry, learns each peer's throughput/RTT/reliability + saturation point + a relayed penalty from the REAL measured outcome of every transfer (measured-only, non-gameable), and ranks a candidate subset per content request to minimize P99 latency without thundering-herd. No user-facing knobs; re-uses the transport-verified peer_id = SHA-256(TLS SPKI DER)."
+repository = "https://github.com/DIG-Network/dig-peer-selector"
+readme = "README.md"
+keywords = ["p2p", "peer-selection", "download", "scheduling", "dig"]
+categories = ["network-programming"]
+
+[dependencies]
+# Peer identity (peer_id = SHA-256(TLS SPKI DER)) + the connection-class ladder (`TraversalKind`) the
+# selector reads observationally to seed class/relay priors. Re-used, never redefined (SPEC §1.3, §7.3).
+dig-nat = { version = "0.1", git = "https://github.com/DIG-Network/dig-nat" }
+
+# The candidate feed: `ContentId` (what is fetched), `ProviderRecord` / `CandidateAddr` / `AddressKind`
+# (the DHT provider records mapped into candidates). Re-used, never redefined (SPEC §7.1, §11).
+dig-dht = { version = "0.1", git = "https://github.com/DIG-Network/dig-dht" }
+
+# Read-only observability snapshots (§5.7) serialize for the agent-friendly/machine-consumable surface.
+serde = { version = "1", features = ["derive"] }
+
+# Deterministic, seedable exploration tie-breaks (SPEC §4.4-F). A small, self-seeded PRNG keeps the
+# harness reproducible; no OS entropy is used so `select` stays pure + testable.
+rand = "0.8"
+rand_pcg = "0.3"
+
+[dev-dependencies]
+# The synthetic-topology + throughput-trace conformance harness (SPEC §8) runs entirely in-process
+# with a deterministic injected clock — NO real network, NO async runtime needed.
+#
+# `serde_json` verifies the read-only observability snapshots (§5.7) serialize for the
+# machine-consumable/agent-friendly surface.
+serde_json = "1"
+
+[profile.release]
+overflow-checks = true

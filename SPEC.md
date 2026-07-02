@@ -432,8 +432,20 @@ fn upsert_candidate(&self, candidate: &Candidate)        // manual/seed feed (§
 fn remove_peer(&self, peer: &PeerId)                      // explicit removal (rare; churn usually drives this)
 ```
 
-- `on_pool_event` consumes `dig_gossip::PoolEvent` verbatim (`PeerAdded`/`PeerRemoved`) — the
-  selector MUST NOT redefine the event type.
+- `on_pool_event` consumes the gossip churn event (`PeerAdded`/`PeerRemoved`) with the **exact shape**
+  of `dig_gossip::PoolEvent` (`PeerAdded { peer_id, addr }`, `PeerRemoved { peer_id, reason }`, over
+  the re-used `dig_nat::PeerId` and a `PoolRemovalReason` of `Disconnected|Dead|Banned`). The shape is
+  **byte-identical** so a host maps a `dig_gossip::PoolEvent` to it 1:1.
+  **Implementation note (binding deviation, recorded per the spec-with-code rule §10):** the reference
+  crate **mirrors** this event type locally rather than `use`-ing `dig-gossip` directly. `dig-gossip`
+  pulls the entire chia-protocol/consensus/TLS stack into what is a pure decision layer, and its
+  published git tip does not currently compile as a dependency (it lags the upstream `chia-*` crate
+  versions), which would both bloat and *break* this crate's build — contradicting this spec's own
+  dependency-minimalism principle (§1, §11) and the `dig-dht`/`dig-pex` precedent that deliberately
+  avoid `dig-gossip`. The mirrored type is field-for-field identical, exactly as `dig-pex` mirrors the
+  L7 address shape "rather than pulling those crates in"; when `dig-gossip` is published to crates.io
+  with a compiling tip it MAY be replaced by a direct re-export with no field/variant change. The
+  contract (the shape the host feeds in) is unchanged; only the *source* of the type differs.
 - `on_connection_class` attaches / updates a live peer's `connection_class` (§2.1) from
   `dig_nat::TraversalKind`.
 
@@ -561,7 +573,9 @@ selector opens no transport and owns no discovery (§1.2).
 - The registry is fed from the `dig-gossip` connected pool: `subscribe_pool_events()` →
   `on_pool_event` (§2.3), `connected_pool_peers()` for an initial snapshot, `pool_stats()` for
   under-connected awareness (a host MAY widen exploration when the pool is below target). The
-  selector MUST consume `dig_gossip::PoolEvent` verbatim.
+  selector consumes the gossip churn event with the **exact shape** of `dig_gossip::PoolEvent`
+  (mirrored field-for-field locally per the §5.4 binding note; the host maps `dig_gossip::PoolEvent`
+  to it 1:1).
 - `dig-pex`-learned peers arrive (through the gossip address book / pool) as **hints** with unknown
   quality; the selector marks provenance `Pex`/`Gossip` and treats quality as cold until measured
   (§3.5, §9.1) — exactly the dig-pex trust rule (a PEX entry is a candidate to dial and verify, never
@@ -703,13 +717,19 @@ MSRV ≥ `1.75.0`):
   `remove_peer(&PeerId)`, plus read-only observability (§5.7).
 - **Types:** `SelectorConfig` (§5.6), `ContentRequest` / `Candidate` / `Selection` / `SelectedPeer`
   (§5.1), `TransferOutcome` / `OutcomeKind` / `OutcomeResult` / `FailureReason` (§5.2),
-  `RangePlanDelta` (§5.5), `PeerEntry` / `PeerQuality` / `Provenance` (§2–3, read-only snapshots).
+  `RangePlanDelta` (§5.5), `PeerEntry` / `PeerQuality` / `Provenance` (§2–3, read-only snapshots),
+  `PoolEvent` / `PoolRemovalReason` (§5.4 — mirrored byte-for-byte from `dig_gossip`).
 - **Re-used (not redefined):** `dig_nat::{PeerId, TraversalKind}`, `dig_dht::{ContentId,
-  ProviderRecord, CandidateAddr, AddressKind}`, `dig_gossip::PoolEvent`.
+  ProviderRecord, CandidateAddr, AddressKind}`.
+- **Mirrored byte-for-byte (not re-used, per the §5.4 binding note):** `PoolEvent` /
+  `PoolRemovalReason` — field-identical to `dig_gossip`'s, sourced locally because `dig-gossip` pulls
+  the whole chia stack and its current git tip does not compile as a dependency.
 
-Dependency posture: depend on `dig-nat` and `dig-dht` for identity/candidate types, and on
-`dig-gossip` for the `PoolEvent`; do NOT depend on `dig-download` for types the loop can express
-structurally (avoid a dependency cycle — the outcome/event mapping lives in the host adapter, §6.2).
+Dependency posture: depend on `dig-nat` and `dig-dht` for identity/candidate types (git-pinned bare
+form until they are on crates.io); **mirror** the `dig-gossip` `PoolEvent` shape locally rather than
+depending on `dig-gossip` (§5.4 binding note — keeps the tree minimal and the build green); do NOT
+depend on `dig-download` for types the loop can express structurally (avoid a dependency cycle — the
+outcome/event mapping lives in the host adapter, §6.2).
 
 ---
 
@@ -719,7 +739,7 @@ The frozen, testable statements of version 1. An implementation conforms iff all
 
 | ID | Statement |
 |---|---|
-| SEL-01 | The public API matches §5 exactly: `select`, `rebalance`, `record_outcome`, the four registry-feed hooks, and the §5.1/§5.2/§5.5 type shapes — using the re-used `dig-nat`/`dig-dht`/`dig-gossip` identity/candidate/event types, not parallel copies. |
+| SEL-01 | The public API matches §5 exactly: `select`, `rebalance`, `record_outcome`, the four registry-feed hooks, and the §5.1/§5.2/§5.5 type shapes — re-using the `dig-nat`/`dig-dht` identity/candidate types (not parallel copies) and consuming the gossip churn event with the exact `dig_gossip::PoolEvent` shape (mirrored field-for-field per the §5.4 binding note, so a host maps `dig_gossip::PoolEvent` to it 1:1). |
 | SEL-02 | The registry key is `peer_id = SHA-256(TLS SPKI DER)`; entries carry addresses, optional connection class, provenance, and a learned quality model; fed by gossip churn (`on_pool_event`) + DHT candidates passed to `select`; bounded with lowest-value eviction (§2). |
 | SEL-03 | A peer's quality is refined ONLY from measured `TransferOutcome`s; throughput/RTT/reliability are recency-weighted estimators satisfying P-recency, P-monotone-convergence, P-responsive-degradation, P-volatility-tracking; observed capacity overrides advertised (§3, §9.2–9.3). |
 | SEL-04 | Saturation point is learned per peer class and caps per-peer concurrency; the relayed penalty is learned from observed frequency + measured impact; decay is driven by observed volatility — none of these is a hardcoded constant or a user knob (§4.1–4.3, §1.5). |
