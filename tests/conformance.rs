@@ -705,6 +705,58 @@ fn sel_02_dispatch_then_silence_stays_within_capacity_bound() {
     );
 }
 
+/// #179 HIGH finding 2 (unbounded side-map growth) — `last_selected` and `dispatched` inside the
+/// engine must be pruned whenever a peer leaves the registry (capacity eviction), not just bounded by
+/// the registry's own capacity. Feed many more unique cold peer_ids than capacity through `select`
+/// (each gets selected — populating `last_selected` — and dispatched — populating `dispatched`), and
+/// advance the clock past the dispatch TTL between rounds so each round's dispatches settle out of
+/// `in_flight` (finding 1's reclamation) and the registry's normal (non-force) eviction path churns
+/// freely. The side maps' reported sizes (via the observability snapshot, SPEC §5.7) MUST stay bounded
+/// close to the registry capacity, never growing with the total number of distinct peer_ids ever seen.
+#[test]
+fn sel_02_side_maps_are_pruned_on_registry_eviction() {
+    let capacity = 6usize;
+    let clock = dig_peer_selector::ClockSource::manual(2000);
+    let cfg = SelectorConfig {
+        registry_capacity: capacity,
+        clock: clock.clone(),
+        ..SelectorConfig::deterministic(2000, 11)
+    };
+    let sel = PeerSelector::new(cfg);
+
+    let n: u16 = capacity as u16 * 20;
+    for i in 0..n {
+        let b = (i % 256) as u8;
+        // Advance the clock past the dispatch TTL each round: the previous round's dispatch(es) are
+        // reclaimed (finding 1) before this round's upsert/eviction runs, so a fresh candidate is
+        // evaluated against genuinely-idle (evictable) older peers rather than ones still protected by
+        // live in-flight — isolating finding 2's side-map pruning from finding 1's TTL mechanics.
+        clock.advance(dig_peer_selector::DISPATCH_TTL_SECS + 1);
+        // Vary content so distinct peer_ids keep arriving as fresh DHT candidates each round.
+        let _ = sel.select(&ContentRequest::new(content(), 2), &[candidate(b)]);
+    }
+    let snap = sel.snapshot();
+    assert!(
+        snap.registry_size <= capacity,
+        "registry itself must stay bounded: {}",
+        snap.registry_size
+    );
+    // The side maps must not have accumulated an entry for every one of the `n` distinct peer_ids fed;
+    // they must track (roughly) the live registry population, not the cumulative feed.
+    assert!(
+        snap.last_selected_len <= capacity * 4,
+        "last_selected must be pruned on eviction, not grow with total peers ever seen ({} entries fed, {} still tracked)",
+        n,
+        snap.last_selected_len
+    );
+    assert!(
+        snap.dispatched_len <= capacity * 4,
+        "dispatched must be pruned on eviction, not grow with total peers ever seen ({} entries fed, {} still tracked)",
+        n,
+        snap.dispatched_len
+    );
+}
+
 // ---- SEL-07 — the dig-download loop contract (verification is a hard penalty; pause not a failure) -
 
 #[test]

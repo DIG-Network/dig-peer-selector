@@ -45,6 +45,20 @@ struct Inner {
     last_selected: std::collections::HashMap<PeerId, u64>,
 }
 
+impl Inner {
+    /// Prune `last_selected` + `dispatched` for every `peer_id` the registry has just reported as
+    /// evicted/removed (#179 finding 2). MUST be called after every registry-mutating operation that
+    /// can shed an entry (capacity eviction on upsert/mark-connected/set-class, or explicit removal) so
+    /// neither side map ever retains a key for a peer no longer in the registry. Cheap when nothing was
+    /// evicted (the common case): `drain_evicted` returns an empty `Vec`.
+    fn prune_evicted_side_maps(&mut self) {
+        for peer in self.registry.drain_evicted() {
+            self.last_selected.remove(&peer);
+            self.dispatched.retain(|(id, _), _| *id != peer);
+        }
+    }
+}
+
 /// What a dispatched range recorded at dispatch time, for saturation learning (SPEC §4.1).
 #[derive(Clone, Copy)]
 struct DispatchRecord {
@@ -100,6 +114,9 @@ impl PeerSelector {
         for c in candidates {
             inner.registry.upsert_candidate(c, Provenance::Dht, now);
         }
+        // A fresh upsert may have evicted an over-capacity entry (§2.5) — prune its side-map residue
+        // before scoring (#179 finding 2).
+        inner.prune_evicted_side_maps();
         self.select_over(&mut inner, req, &candidate_ids(candidates), &[], now)
     }
 
@@ -370,6 +387,9 @@ impl PeerSelector {
         if inner.registry.get(&outcome.peer_id).is_none() {
             let cand = Candidate::new(outcome.peer_id, Vec::new());
             inner.registry.upsert_candidate(&cand, Provenance::Nat, now);
+            // The self-heal upsert may have evicted a different over-capacity entry — prune its
+            // side-map residue (#179 finding 2).
+            inner.prune_evicted_side_maps();
         }
 
         // Retrieve the dispatch context for saturation attribution (SPEC §4.1) before mutating.
@@ -427,10 +447,13 @@ impl PeerSelector {
                 inner
                     .registry
                     .mark_connected(*peer_id, Provenance::Gossip, now);
+                // Insertion may have evicted a different over-capacity entry (#179 finding 2).
+                inner.prune_evicted_side_maps();
             }
             PoolEvent::PeerRemoved { peer_id, reason } => {
                 let banned = matches!(reason, PoolRemovalReason::Banned);
                 inner.registry.mark_disconnected(peer_id, banned);
+                // A plain disconnect never deletes the entry (SPEC §2.3), so nothing to prune here.
             }
         }
     }
@@ -440,6 +463,8 @@ impl PeerSelector {
         let now = self.now();
         let mut inner = self.inner.lock().expect("selector mutex poisoned");
         inner.registry.set_connection_class(*peer, class, now);
+        // Insertion may have evicted a different over-capacity entry (#179 finding 2).
+        inner.prune_evicted_side_maps();
     }
 
     /// Manually upsert a candidate (seed / bootstrap feed, SPEC §5.4). A fresh peer is cold.
@@ -449,6 +474,8 @@ impl PeerSelector {
         inner
             .registry
             .upsert_candidate(candidate, Provenance::Manual, now);
+        // Insertion may have evicted a different over-capacity entry (#179 finding 2).
+        inner.prune_evicted_side_maps();
     }
 
     /// Explicitly remove a peer (rare; churn usually drives this — SPEC §5.4). A peer with a range in
@@ -456,6 +483,8 @@ impl PeerSelector {
     pub fn remove_peer(&self, peer: &PeerId) {
         let mut inner = self.inner.lock().expect("selector mutex poisoned");
         inner.registry.remove(peer);
+        // The removal itself must prune the same peer's side-map residue (#179 finding 2).
+        inner.prune_evicted_side_maps();
     }
 
     /// Explicitly note that `count` ranges were dispatched to `peer` (SPEC §5.3). Optional: `select`
@@ -475,10 +504,18 @@ impl PeerSelector {
         inner.registry.get(peer).map(PeerSnapshot::of)
     }
 
-    /// A read-only snapshot of the selector's learned aggregate state (SPEC §5.7).
+    /// A read-only snapshot of the selector's learned aggregate state (SPEC §5.7). Includes the
+    /// engine's internal side-map sizes (`last_selected_len`, `dispatched_len`) so a host can confirm
+    /// they track the live registry population rather than growing unboundedly (#179 finding 2).
     pub fn snapshot(&self) -> SelectorSnapshot {
         let inner = self.inner.lock().expect("selector mutex poisoned");
-        SelectorSnapshot::build(inner.registry.iter(), &inner.saturation, &inner.relay)
+        SelectorSnapshot::build(
+            inner.registry.iter(),
+            &inner.saturation,
+            &inner.relay,
+            inner.last_selected.len(),
+            inner.dispatched.len(),
+        )
     }
 
     /// The current registry size (SPEC §5.7).

@@ -80,6 +80,14 @@ pub struct SelectorSnapshot {
     pub saturation_unknown: u32,
     /// The current learned relayed-penalty factor in `[floor, 1.0]`.
     pub relayed_penalty: f64,
+    /// Size of the engine's internal `last_selected` side map (anti-starvation bookkeeping, SPEC
+    /// §5.1). Exposed so a host can confirm it tracks the live registry population rather than
+    /// growing unboundedly with every distinct peer ever fed (#179 finding 2) — observability only,
+    /// never an input.
+    pub last_selected_len: usize,
+    /// Size of the engine's internal `dispatched` side map (saturation-attribution bookkeeping, SPEC
+    /// §4.1, §5.3). Same purpose as `last_selected_len` (#179 finding 2).
+    pub dispatched_len: usize,
 }
 
 impl SelectorSnapshot {
@@ -88,6 +96,8 @@ impl SelectorSnapshot {
         entries: impl Iterator<Item = &'a PeerEntry>,
         saturation: &SaturationModel,
         relay: &RelayModel,
+        last_selected_len: usize,
+        dispatched_len: usize,
     ) -> Self {
         let mut registry_size = 0;
         let mut measured_peers = 0;
@@ -109,6 +119,8 @@ impl SelectorSnapshot {
             saturation_relayed: saturation.saturation_point(PeerClass::RelayedPath),
             saturation_unknown: saturation.saturation_point(PeerClass::Unknown),
             relayed_penalty: relay.penalty(),
+            last_selected_len,
+            dispatched_len,
         }
     }
 }
@@ -176,7 +188,7 @@ mod tests {
         r.get_mut(&pid(1)).unwrap().quality.bump_samples();
         let sat = SaturationModel::default();
         let relay = RelayModel::default();
-        let snap = SelectorSnapshot::build(r.iter(), &sat, &relay);
+        let snap = SelectorSnapshot::build(r.iter(), &sat, &relay, 0, 0);
         assert_eq!(snap.registry_size, 2);
         assert_eq!(snap.measured_peers, 1);
         assert_eq!(snap.connected_peers, 1);

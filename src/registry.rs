@@ -143,6 +143,11 @@ pub enum FeedResult {
 pub struct Registry {
     entries: HashMap<PeerId, PeerEntry>,
     capacity: usize,
+    /// `peer_id`s removed since the last [`Registry::drain_evicted`] call — by capacity eviction
+    /// (§2.5) or explicit [`Registry::remove`] (#179 finding 2). The engine drains this after every
+    /// registry-mutating call and prunes its own side maps (`last_selected`, `dispatched`) for the
+    /// same keys, so a peer that leaves the registry leaves no residue elsewhere.
+    evicted: Vec<PeerId>,
 }
 
 impl Registry {
@@ -151,12 +156,21 @@ impl Registry {
         Registry {
             entries: HashMap::new(),
             capacity: capacity.max(1),
+            evicted: Vec::new(),
         }
     }
 
     /// The number of entries currently held.
     pub fn len(&self) -> usize {
         self.entries.len()
+    }
+
+    /// Drain the set of `peer_id`s removed from the registry since the last drain (#179 finding 2):
+    /// by capacity eviction (§2.5) or explicit [`Registry::remove`]. The caller (the engine) MUST
+    /// prune any per-peer side state it keeps outside the registry for every id returned here, so
+    /// nothing outlives the peer's registry entry. Returns an empty `Vec` when nothing left.
+    pub fn drain_evicted(&mut self) -> Vec<PeerId> {
+        std::mem::take(&mut self.evicted)
     }
 
     /// Whether the registry is empty.
@@ -280,12 +294,14 @@ impl Registry {
     }
 
     /// Explicitly remove a peer (rare; churn usually drives this — SPEC §5.4). A peer with a range in
-    /// flight is NOT removed (removing it would corrupt in-flight accounting).
+    /// flight is NOT removed (removing it would corrupt in-flight accounting). Records the removal for
+    /// [`Registry::drain_evicted`] (#179 finding 2) so the engine prunes its side maps.
     pub fn remove(&mut self, peer: &PeerId) -> FeedResult {
         match self.entries.get(peer) {
             Some(e) if e.quality.in_flight > 0 => FeedResult::Updated, // keep — busy
             Some(_) => {
                 self.entries.remove(peer);
+                self.evicted.push(*peer);
                 FeedResult::MarkedDisconnected
             }
             None => FeedResult::Absent,
@@ -382,6 +398,7 @@ impl Registry {
             match victim {
                 Some(id) => {
                     self.entries.remove(&id);
+                    self.evicted.push(id);
                 }
                 // Everything left is a currently-connected live link — cannot shed further; the
                 // capacity bound is only exceeded by the count of genuinely-connected peers, which is
@@ -574,6 +591,32 @@ mod tests {
             r.get(&pid(1)).unwrap().is_evictable(),
             "reclaiming stale in_flight must make the entry evictable again"
         );
+    }
+
+    /// #179 HIGH finding 2: the registry must surface which `peer_id`s left so the engine can prune
+    /// its own side maps (`last_selected`, `dispatched`). Eviction via `enforce_capacity` (triggered by
+    /// an over-capacity `upsert_candidate`) must be drainable.
+    #[test]
+    fn drain_evicted_reports_peers_shed_by_capacity_enforcement() {
+        let mut r = Registry::new(1);
+        r.upsert_candidate(&cand(1), Provenance::Dht, 100);
+        assert!(r.drain_evicted().is_empty(), "no eviction yet");
+        // A second candidate over capacity evicts the first (lowest value, both cold/disconnected).
+        r.upsert_candidate(&cand(2), Provenance::Dht, 200);
+        let evicted = r.drain_evicted();
+        assert_eq!(evicted, vec![pid(1)], "capacity eviction must be reported");
+        // Draining again yields nothing until another eviction happens.
+        assert!(r.drain_evicted().is_empty());
+    }
+
+    /// #179 HIGH finding 2: an explicit `remove` that actually deletes the entry must also be reported
+    /// via `drain_evicted` so the engine prunes its side maps uniformly for every removal path.
+    #[test]
+    fn drain_evicted_reports_peers_shed_by_explicit_remove() {
+        let mut r = Registry::new(100);
+        r.upsert_candidate(&cand(1), Provenance::Dht, 100);
+        r.remove(&pid(1));
+        assert_eq!(r.drain_evicted(), vec![pid(1)]);
     }
 
     #[test]

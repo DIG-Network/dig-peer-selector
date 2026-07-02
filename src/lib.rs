@@ -96,7 +96,7 @@ pub use engine::PeerSelector;
 pub use observe::{peer_id_hex, PeerSnapshot, SelectorSnapshot};
 pub use pool_event::{PoolEvent, PoolRemovalReason};
 pub use quality::{Estimate, PeerQuality, Reliability};
-pub use registry::{FeedResult, PeerEntry};
+pub use registry::{FeedResult, PeerEntry, DISPATCH_TTL_SECS};
 pub use scoring::{PeerClass, RelayModel, SaturationModel};
 pub use types::{
     Candidate, ContentRequest, FailureReason, OutcomeKind, OutcomeResult, Provenance,

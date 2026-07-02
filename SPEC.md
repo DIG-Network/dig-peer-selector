@@ -497,10 +497,20 @@ penalty (§1.5). Adding such a field is a conformance failure.
 ### 5.7 Observability (read-only, non-behavioral)
 
 The selector MAY expose read-only introspection for debugging/metrics — e.g. a snapshot of a peer's
-learned `PeerQuality`, the current registry size, learned saturation/penalty values. These are
-**observability only**: reading or logging them MUST NOT change selection behavior, and they are not
-configuration. This satisfies the ecosystem "agent-friendly / machine-consumable" requirement
-without introducing a knob.
+learned `PeerQuality`, the current registry size, learned saturation/penalty values, and the size of
+any internal per-peer bookkeeping the engine keeps outside the registry (e.g. anti-starvation /
+dispatch-attribution side maps). These are **observability only**: reading or logging them MUST NOT
+change selection behavior, and they are not configuration. This satisfies the ecosystem
+"agent-friendly / machine-consumable" requirement without introducing a knob.
+
+**No side map may outlive a peer's registry membership (#179 finding 2).** Any per-peer bookkeeping
+the engine keeps *outside* the registry (e.g. the last-selected epoch for anti-starvation coverage,
+or dispatch-attribution context keyed by peer) MUST be pruned for a `peer_id` no later than the same
+operation that removes it from the registry (capacity eviction or explicit removal, §2.5). Such a
+side map's size MUST track the live registry population, not the cumulative count of distinct
+`peer_id`s ever fed — otherwise the registry's own capacity bound (§2.5) protects nothing, since an
+attacker feeding a continuous stream of unique cold `peer_id`s would still grow unbounded state
+elsewhere in the selector.
 
 ---
 
