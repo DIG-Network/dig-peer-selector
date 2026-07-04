@@ -11,10 +11,8 @@ name: Publish to crates.io
 # dig-peer-selector is published, or the publish step (correctly) fails on the unresolved git
 # dependency (`cargo publish` rejects a git dependency). The orchestrator sequences the release tags.
 
+# crates.io publish is MANUAL (workflow_dispatch only) pending the crates.io-publishing decision (#230).
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
     inputs:
       version:
