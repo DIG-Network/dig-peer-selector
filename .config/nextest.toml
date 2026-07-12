@@ -1,0 +1,10 @@
+# Flaky-test management (#489): retry a failing test up to 2 times before marking it failed, and
+# report which tests needed a retry (flaky) in CI output. Applies to `cargo nextest run` and the
+# combined `cargo llvm-cov nextest` form used in CI (ci.yml / publish.yml).
+[profile.default]
+retries = 2
+
+[profile.ci]
+retries = 2
+failure-output = "immediate-final"
+final-status-level = "flaky"

@@ -28,7 +28,7 @@
 # orchestrator sequences the release tags.
 [package]
 name = "dig-peer-selector"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 rust-version = "1.75.0"
 license = "Apache-2.0 OR MIT"
