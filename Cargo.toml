@@ -28,7 +28,7 @@
 # orchestrator sequences the release tags.
 [package]
 name = "dig-peer-selector"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 rust-version = "1.75.0"
 license = "Apache-2.0 OR MIT"
@@ -41,11 +41,13 @@ categories = ["network-programming"]
 [dependencies]
 # Peer identity (peer_id = SHA-256(TLS SPKI DER)) + the connection-class ladder (`TraversalKind`) the
 # selector reads observationally to seed class/relay priors. Re-used, never redefined (SPEC §1.3, §7.3).
-dig-nat = { version = "0.1", git = "https://github.com/DIG-Network/dig-nat" }
+dig-nat = "0.2"
 
 # The candidate feed: `ContentId` (what is fetched), `ProviderRecord` / `CandidateAddr` / `AddressKind`
 # (the DHT provider records mapped into candidates). Re-used, never redefined (SPEC §7.1, §11).
-dig-dht = { version = "0.1", git = "https://github.com/DIG-Network/dig-dht" }
+# Sourced from crates.io (dig-dht >= 0.1.2 deps dig-nat "^0.2"), so cargo unifies its dig-nat with
+# this crate's to a SINGLE dig-nat 0.2.1 instance. NC-7: prefer the crates.io release over bare-git.
+dig-dht = "0.1"
 
 # Read-only observability snapshots (§5.7) serialize for the agent-friendly/machine-consumable surface.
 serde = { version = "1", features = ["derive"] }
