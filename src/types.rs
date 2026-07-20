@@ -98,8 +98,15 @@ impl Candidate {
     ///
     /// A provider record is an **address hint** (SPEC §9.1): the peer is proven to hold the content
     /// only when a transfer from it yields a `Success` outcome.
+    ///
+    /// Decodes the record's raw `provider_peer_id` hex field directly via **this crate's own**
+    /// `dig_nat::PeerId::from_hex`, rather than calling `ProviderRecord::provider_peer_id()` — that
+    /// convenience method returns `dig-dht`'s own (transitively older) `dig-nat` version's `PeerId`,
+    /// a distinct Rust type from ours once `dig-dht` and `dig-peer-selector` resolve different
+    /// `dig-nat` majors. `PeerId` is a pure 32-byte-hex value type, so decoding the wire string
+    /// ourselves is exact and version-independent.
     pub fn from_provider_record(rec: &ProviderRecord) -> Option<Self> {
-        rec.provider_peer_id()
+        PeerId::from_hex(&rec.provider_peer_id)
             .map(|peer_id| Candidate::new(peer_id, rec.addresses.clone()))
     }
 }
@@ -336,9 +343,12 @@ mod tests {
 
     #[test]
     fn candidate_from_provider_record_round_trips_peer_id() {
+        // Built with `dig-dht`'s OWN `PeerId` type (its transitive `dig-nat` version), exactly as a
+        // real DHT producer would — proving `from_provider_record` decodes the wire hex correctly
+        // even when the producer and this crate resolve different `dig-nat` majors (SPEC §7.1, §11).
         let rec = ProviderRecord::new(
             &dig_dht::ContentId::store(S).to_key(),
-            &pid(7),
+            &dig_dht::PeerId::from_bytes([7; 32]),
             vec![CandidateAddr::direct("203.0.113.7", 9444)],
             1000,
         );

@@ -19,16 +19,27 @@
 # (`TransferOutcome`/`Selection` are defined here), so there is no dependency cycle — the
 # DownloadEvent→record_outcome mapping lives in the host adapter (dig-node), not this crate (SPEC §11).
 #
-# Sourcing: like the sibling crates, the DIG dependencies are not yet on crates.io, so they resolve
-# from the DIG-Network git repos (bare `git` form so the standalone CI checkout and the superproject
-# build agree). `version = "0.1"` is what `cargo publish` records. RELEASE ORDERING (ecosystem rule:
-# release-first for shared contracts): dig-nat, dig-dht and dig-gossip must be published to crates.io
-# — and these `git` sources swapped for the plain crates.io versions — BEFORE dig-peer-selector is
-# published; `cargo publish` rejects a git dependency, so the publish workflow enforces this. The
-# orchestrator sequences the release tags.
+# Sourcing: all DIG dependencies below resolve from crates.io (never `git` — cargo publish rejects a
+# git dependency), per the ecosystem's all-crates-on-crates.io rule (CLAUDE.md §3.6/#1216).
+#
+# `dig-nat` 0.6.0 cut a HARD self-signed→CA-signed mTLS cutover: it dropped its own
+# `LocalIdentity`/`build_bound_cert`/`cert_binding` surface in favor of re-exporting `dig-tls`'s
+# `NodeCert`-based identity model. This crate never called any of that removed surface — it only
+# reads `PeerId`/`TraversalKind` as pure, connection-agnostic VALUE types (SPEC §1.3, §7.3) — so the
+# 0.6.0 bump needed no code migration beyond the version pin.
+#
+# `dig-dht` 0.2.0 (the latest published version at the time of this bump) has NOT yet migrated to
+# `dig-nat` 0.6 — it still resolves `dig-nat ^0.3`, so cargo unifies TWO distinct `dig-nat` majors in
+# this crate's graph (0.3.x via dig-dht, 0.6.0 direct). `ProviderRecord::provider_peer_id()` (a
+# dig-dht convenience method) therefore returns dig-dht's OLDER `dig_nat::PeerId`, a different Rust
+# type from ours. `Candidate::from_provider_record` avoids the mismatch by decoding the record's raw
+# `provider_peer_id` hex FIELD directly via this crate's own `dig_nat::PeerId::from_hex` — `PeerId` is
+# a pure 32-byte-hex value, so this is exact and version-independent. When `dig-dht` publishes a
+# `dig-nat 0.6`-compatible release, this crate can revert to the convenience method (not required —
+# either form is correct).
 [package]
 name = "dig-peer-selector"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 rust-version = "1.75.0"
 license = "Apache-2.0 OR MIT"
@@ -41,13 +52,11 @@ categories = ["network-programming"]
 [dependencies]
 # Peer identity (peer_id = SHA-256(TLS SPKI DER)) + the connection-class ladder (`TraversalKind`) the
 # selector reads observationally to seed class/relay priors. Re-used, never redefined (SPEC §1.3, §7.3).
-dig-nat = "0.3"
+dig-nat = "0.6.0"
 
 # The candidate feed: `ContentId` (what is fetched), `ProviderRecord` / `CandidateAddr` / `AddressKind`
 # (the DHT provider records mapped into candidates). Re-used, never redefined (SPEC §7.1, §11).
-# Sourced from crates.io (dig-dht >= 0.1.2 deps dig-nat "^0.2"), so cargo unifies its dig-nat with
-# this crate's to a SINGLE dig-nat 0.2.1 instance. NC-7: prefer the crates.io release over bare-git.
-dig-dht = "0.1.3"
+dig-dht = "0.2.0"
 
 # Read-only observability snapshots (§5.7) serialize for the agent-friendly/machine-consumable surface.
 serde = { version = "1", features = ["derive"] }
