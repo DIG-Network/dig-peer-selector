@@ -7,7 +7,7 @@ This project adheres to [Semantic Versioning](https://semver.org) and
 ## [0.4.0] - 2026-07-21
 
 ### Chores
-- **deps:** Adopt dig-dht 0.4 (resolve type conflicts with dig-download 0.4 in dig-node-core, #1451)
+- **deps:** Adopt dig-dht 0.4 (#7)
 
 ## [0.3.0] - 2026-07-21
 
