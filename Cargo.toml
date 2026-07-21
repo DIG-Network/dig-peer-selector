@@ -58,7 +58,7 @@
 # minor-position bump signals the breaking change per SemVer's 0.x convention).
 [package]
 name = "dig-peer-selector"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 rust-version = "1.75.0"
 license = "Apache-2.0 OR MIT"
@@ -75,7 +75,7 @@ dig-nat = "0.8.0"
 
 # The candidate feed: `ContentId` (what is fetched), `ProviderRecord` / `CandidateAddr` / `AddressKind`
 # (the DHT provider records mapped into candidates). Re-used, never redefined (SPEC §7.1, §11).
-dig-dht = "0.3.0"
+dig-dht = "0.4.0"
 
 # Read-only observability snapshots (§5.7) serialize for the agent-friendly/machine-consumable surface.
 serde = { version = "1", features = ["derive"] }
