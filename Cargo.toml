@@ -58,7 +58,7 @@
 # minor-position bump signals the breaking change per SemVer's 0.x convention).
 [package]
 name = "dig-peer-selector"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
 rust-version = "1.75.0"
 license = "Apache-2.0 OR MIT"
