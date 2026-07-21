@@ -41,9 +41,24 @@
 # a pure 32-byte-hex value, so this is exact and version-independent. When `dig-dht` publishes a
 # `dig-nat 0.6`-compatible release, this crate can revert to the convenience method (not required —
 # either form is correct).
+#
+# `dig-nat` 0.8.0 (STUN happy-eyeballs reflexive discovery, §5.2) is purely ADDITIVE over 0.7 — a new
+# discovery entry point only, every type this crate reads (`PeerId`, `TraversalKind`) is unchanged — a
+# mechanical version-pin bump, no code migration.
+#
+# `dig-dht` 0.3.0 has the SAME public API as 0.2.2 — its 0.3.0 was itself just a `dig-nat` dependency
+# bump (to stay in lockstep with the 0.8.0 cutover above), not a behavior change. Bumping both together
+# unifies the final dependency tree on ONE `dig-nat` version (the split-major situation described above
+# is resolved by this bump — both this crate and `dig-dht` now agree on `dig-nat 0.8`), so
+# `ProviderRecord::provider_peer_id()` and the raw-hex decode path in `Candidate::from_provider_record`
+# now return the SAME `PeerId` type; the raw-hex path is kept as-is since it remains correct either way.
+#
+# This crate's public API re-exports the bumped `dig-nat`/`dig-dht` types, so the dependency bump is
+# breaking FOR CONSUMERS even though it's additive for us — hence the 0.2.1 -> 0.3.0 release (0.x
+# minor-position bump signals the breaking change per SemVer's 0.x convention).
 [package]
 name = "dig-peer-selector"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.75.0"
 license = "Apache-2.0 OR MIT"
@@ -56,11 +71,11 @@ categories = ["network-programming"]
 [dependencies]
 # Peer identity (peer_id = SHA-256(TLS SPKI DER)) + the connection-class ladder (`TraversalKind`) the
 # selector reads observationally to seed class/relay priors. Re-used, never redefined (SPEC §1.3, §7.3).
-dig-nat = "0.7.0"
+dig-nat = "0.8.0"
 
 # The candidate feed: `ContentId` (what is fetched), `ProviderRecord` / `CandidateAddr` / `AddressKind`
 # (the DHT provider records mapped into candidates). Re-used, never redefined (SPEC §7.1, §11).
-dig-dht = "0.2.0"
+dig-dht = "0.3.0"
 
 # Read-only observability snapshots (§5.7) serialize for the agent-friendly/machine-consumable surface.
 serde = { version = "1", features = ["derive"] }
