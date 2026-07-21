@@ -4,6 +4,11 @@ All notable changes to this project are documented here.
 This project adheres to [Semantic Versioning](https://semver.org) and
 [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.4.1] - 2026-07-21
+
+### Bug Fixes
+- **release:** Sync Cargo.lock own-version so `cargo package --locked` succeeds (0.4.0 publish failed on a stale lock); no code change; dig-dht 0.4 adoption unchanged.
+
 ## [0.4.0] - 2026-07-21
 
 ### Chores
