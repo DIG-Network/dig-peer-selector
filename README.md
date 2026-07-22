@@ -77,6 +77,11 @@ The selector is the "brain"; these crates are the "senses + hands". Wire it as m
   ladder (direct → UPnP → NAT-PMP → PCP → hole-punch → relayed-TURN) and knows which method won + exposes
   it. The selector reads that connection class per peer (esp. "relayed" vs "direct") to seed the
   relayed-penalty learning, and the actual transfers ride dig-nat's mTLS mux streams.
+- **`dig-peer`** — the CONNECTION BUILDER. The selector returns ranked `PeerId`s in each `Selection`; the
+  node uses `dig-peer` to establish connections: construct a `PeerTarget` from the `peer_id` + candidate
+  addresses, call `DigPeer::connect` to establish mTLS, and use the resulting `Connected` streams for the
+  data transfer. The selector is agnostic to transport mechanics — it only ranks peers and learns from
+  outcomes. Connection establishment is entirely the node's responsibility via `dig-peer`.
 - **`dig-download`** — the EXECUTOR + FEEDBACK PRODUCER. This is the tight loop: `dig-download`'s
   multi-source range scheduler asks the selector for the best peer subset per download (and per re-balance
   when a source drops / a range needs relocating), executes the byte-range fan-out with pause/resume +
@@ -85,8 +90,9 @@ The selector is the "brain"; these crates are the "senses + hands". Wire it as m
   range to another provider — the selector should DRIVE that choice + LEARN from the failure.
 - **`dig-node`** (in digstore) — the HOST that owns the instances and wires them together: it constructs
   the selector, feeds it the gossip pool + dig-nat connection classes, passes dig-dht providers in on each
-  content-want, and hands the selector↔dig-download loop the content requests. The selector is a dependency
-  of the node's content-fetch path (the same path #164/#165 build).
+  content-want, and hands the selector↔dig-download loop the content requests. It uses dig-peer to
+  establish connections to selected peers. The selector is a dependency of the node's content-fetch path
+  (the same path #164/#165 build).
 
 ### The end-to-end flow (what to implement to)
 
