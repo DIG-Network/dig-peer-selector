@@ -41,7 +41,7 @@
 //! ## Implementers' note — how `dig-node` embeds the selector (P3 integration, digstore)
 //!
 //! The selector is the **source-selection seam** between `dig-dht` and `dig-download`. `dig-node`
-//! wires it as follows (the wiring lives in the node, NOT this crate — SPEC §6.1, §7.4):
+//! wires it as follows (the wiring lives in the node, NOT this crate — SPEC §6.1, §7.5):
 //!
 //! 1. **Construct** one [`PeerSelector`] per node: `PeerSelector::new(SelectorConfig::default())`.
 //! 2. **Feed the registry** continuously:
@@ -66,6 +66,20 @@
 //! 5. **On a dropped source / relocate**, call [`rebalance`](PeerSelector::rebalance) with the still-
 //!    active peers and the still-needed ranges to get a replacement subset (SPEC §5.5). On resume,
 //!    `select`/`rebalance` only the ranges NOT in `DownloadState::done_ranges` (SPEC §6.4).
+//!
+//! ## DigPeer hand-off — how consumers establish connections
+//!
+//! The selector returns *ranked peer identities* (each [`SelectedPeer`] carries a [`PeerId`]); it does
+//! NOT establish connections. The node is responsible for **connecting** to each selected peer via
+//! the [`dig-peer`] crate: construct a [`dig_peer::PeerTarget`] from the `peer_id` + addresses, then
+//! call [`dig_peer::DigPeer::connect`] to establish mTLS and get a [`dig_peer::Connected`] for the
+//! actual streams (SPEC §6.1, §11). The selector's role ends at selection; the transport is entirely
+//! the node's (and `dig-download`'s via `dig-nat`) responsibility.
+//!
+//! [`dig-peer`]: https://github.com/DIG-Network/dig-peer
+//! [`dig_peer::PeerTarget`]: https://docs.rs/dig-peer/latest/dig_peer/struct.PeerTarget.html
+//! [`dig_peer::DigPeer::connect`]: https://docs.rs/dig-peer/latest/dig_peer/struct.DigPeer.html#method.connect
+//! [`dig_peer::Connected`]: https://docs.rs/dig-peer/latest/dig_peer/struct.Connected.html
 //!
 //! Because `TransferOutcome`/`Selection` are defined here structurally, this crate does NOT depend on
 //! `dig-download` — avoiding a dependency cycle; the event→outcome mapping lives in the node adapter

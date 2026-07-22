@@ -622,12 +622,27 @@ selector opens no transport and owns no discovery (§1.2).
   `open_range_stream`); the selector never opens one itself. `peer_id = SHA-256(TLS SPKI DER)` is the
   identity throughout (§1.3, §9.1).
 
-### 7.4 `dig-node` (digstore) — the host
+### 7.4 `dig-peer` — the connection hand-off
+
+- The selector's output is **ranked `PeerId`s** in a `Selection`: each `SelectedPeer` carries a
+  `peer_id` and a recommended `max_concurrency`. The selector **does not** establish connections (§1.2
+  boundary).
+- The host/executor (typically `dig-node`, via `dig-download`'s integration point) is responsible for
+  **connecting** to each selected peer:
+  1. Construct a [`dig_peer::PeerTarget`] from the ranked `peer_id` + the candidate's address(es).
+  2. Call [`dig_peer::DigPeer::connect`] to establish mTLS over `dig-nat` and obtain the connection.
+  3. Use the resulting [`dig_peer::Connected`] streams for the data transfer (via `dig-download`).
+- Connection establishment, NAT traversal, and transport are entirely the responsibility of `dig-peer`
+  and `dig-nat`; the selector is a pure decision layer and has no opinion on how the connection is made.
+  Its only contract is to rank peers and learn from measured outcomes (§5, §6).
+
+### 7.5 `dig-node` (digstore) — the host
 
 - `dig-node` constructs the selector, wires the gossip pool subscription and `dig-nat` connection
   classes into it, calls `find_providers` per content want and passes the providers to `select`, and
   runs the `select ↔ dig-download` loop (translating `DownloadEvent`s into `record_outcome` calls,
-  §6.2). The selector is a dependency of the node's content-fetch path.
+  §6.2). For each peer in the returned `Selection`, it uses `dig-peer` to establish a connection
+  (§7.4). The selector is a dependency of the node's content-fetch path.
 
 ---
 
