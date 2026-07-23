@@ -67,9 +67,14 @@
 # either bump, so this is a mechanical version-pin bump + re-export propagation, not a scoring/decision
 # logic change — hence the 0.4.2 -> 0.5.0 release (0.x minor-position bump signals the breaking-for-
 # consumers re-export change per SemVer's 0.x convention, same reasoning as the 0.3.0 bump above).
+#
+# `dig-nat` 0.11.0 + `dig-dht` 0.5.1 (release-first cascade #1550, unblocking #1532 Leg B / #1062) —
+# dig-nat 0.11 is purely ADDITIVE over 0.10 (a new relay-accept path), and dig-dht 0.5.1 is itself just
+# the dig-nat ^0.11 dependency bump. Both API surfaces this crate reads are unchanged, so this remains a
+# mechanical version-pin bump with no scoring/decision logic change — a 0.5.1 -> 0.5.2 patch release.
 [package]
 name = "dig-peer-selector"
-version = "0.5.1"
+version = "0.5.2"
 edition = "2021"
 rust-version = "1.75.0"
 license = "Apache-2.0 OR MIT"
@@ -82,11 +87,11 @@ categories = ["network-programming"]
 [dependencies]
 # Peer identity (peer_id = SHA-256(TLS SPKI DER)) + the connection-class ladder (`TraversalKind`) the
 # selector reads observationally to seed class/relay priors. Re-used, never redefined (SPEC §1.3, §7.3).
-dig-nat = "0.10"
+dig-nat = "0.11"
 
 # The candidate feed: `ContentId` (what is fetched), `ProviderRecord` / `CandidateAddr` / `AddressKind`
 # (the DHT provider records mapped into candidates). Re-used, never redefined (SPEC §7.1, §11).
-dig-dht = "0.5"
+dig-dht = "0.5.1"
 
 # Read-only observability snapshots (§5.7) serialize for the agent-friendly/machine-consumable surface.
 serde = { version = "1", features = ["derive"] }
