@@ -72,9 +72,31 @@
 # dig-nat 0.11 is purely ADDITIVE over 0.10 (a new relay-accept path), and dig-dht 0.5.1 is itself just
 # the dig-nat ^0.11 dependency bump. Both API surfaces this crate reads are unchanged, so this remains a
 # mechanical version-pin bump with no scoring/decision logic change — a 0.5.1 -> 0.5.2 patch release.
+#
+# `dig-nat` 0.13.0 + `dig-dht` 0.7.0 (release-first cascade #1656, unblocking P0 #1640 — dig-nat capped
+# framing DECODE at 64 KiB but not ENCODE, so every DIG read/reshare above ~48 KiB failed to decode).
+# Both previous requirements were UNRESOLVABLE, not merely old: a `0.x` minor is semver-incompatible, so
+# `dig-nat = "0.11"` means `>=0.11,<0.12` and `dig-dht = "0.5.1"` means `>=0.5.1,<0.6` — neither could
+# ever reach the published 0.13.0 / 0.7.0. The crate was stranded, and the framing fix could not arrive.
+#
+# No code migration was required, and this was verified rather than assumed: dig-nat 0.12 made the mux
+# wire types (`RangeFrame`, `RangeRequest`, `Availability*`) `#[non_exhaustive]` with a fallible
+# `encode()`, and this crate constructs or encodes NONE of them — it reads only `PeerId` +
+# `TraversalKind` as pure connection-agnostic value types (SPEC §1.3, §7.3). dig-dht 0.6 was purely
+# additive over 0.5.1 and its 0.7.0 was itself just the dig-nat ^0.13 bump, so the candidate-feed
+# surface (`ContentId`/`ProviderRecord`/`CandidateAddr`/`AddressKind`) is unchanged.
+#
+# Released as 0.5.2 -> 0.6.0 (breaking, per SemVer's 0.x minor-position convention) because the bumped
+# types are DEP-OWNED and re-exported from this crate's public API: `TraversalKind` is defined in dig-nat
+# itself (`src/method/mod.rs`), and all four candidate-feed types are defined in dig-dht itself
+# (`src/content.rs`, `src/record.rs`). A consumer holding a dig-dht 0.5.x `ContentId` therefore cannot
+# pass it to this crate any more. `PeerId` is the one exception — it is DEFINED in `dig-tls`
+# (`identity.rs`) and merely re-exported through dig-nat, and both dig-nat versions agree on
+# `dig-tls ^0.3`, so cargo unifies it and that re-export alone would not have been breaking. Resolving
+# each re-export to its defining crate — not reading the re-export list — is what makes this call honest.
 [package]
 name = "dig-peer-selector"
-version = "0.5.2"
+version = "0.6.0"
 edition = "2021"
 rust-version = "1.75.0"
 license = "Apache-2.0 OR MIT"
@@ -87,11 +109,11 @@ categories = ["network-programming"]
 [dependencies]
 # Peer identity (peer_id = SHA-256(TLS SPKI DER)) + the connection-class ladder (`TraversalKind`) the
 # selector reads observationally to seed class/relay priors. Re-used, never redefined (SPEC §1.3, §7.3).
-dig-nat = "0.11"
+dig-nat = "0.13"
 
 # The candidate feed: `ContentId` (what is fetched), `ProviderRecord` / `CandidateAddr` / `AddressKind`
 # (the DHT provider records mapped into candidates). Re-used, never redefined (SPEC §7.1, §11).
-dig-dht = "0.5.1"
+dig-dht = "0.7"
 
 # Read-only observability snapshots (§5.7) serialize for the agent-friendly/machine-consumable surface.
 serde = { version = "1", features = ["derive"] }
