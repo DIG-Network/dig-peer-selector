@@ -242,16 +242,17 @@ pub struct ScoredPeer {
     pub tie_break: u64,
 }
 
-/// Test-only, PER-THREAD call counter for [`score_peer`] (#179 LOW finding: `select`/`rebalance` must
-/// score each pooled peer at most ONCE per call, not twice via a separate `proven_score_bounds` pass).
-/// Never read or incremented outside `cfg(test)` — zero cost in production.
-///
-/// Per-thread is what makes a call-count assertion sound: `select`/`rebalance` score entirely on the
-/// calling thread, while `cargo test` runs tests on many threads in parallel. A process-global counter
-/// would mix in every concurrently-running scoring test's calls, which no lock held by only the
-/// measuring test can prevent.
 #[cfg(test)]
 thread_local! {
+    /// Test-only, PER-THREAD call counter for [`score_peer`] (#179 LOW finding: `select`/`rebalance`
+    /// must score each pooled peer at most ONCE per call, not twice via a separate
+    /// `proven_score_bounds` pass). Never read or incremented outside `cfg(test)` — zero cost in
+    /// production.
+    ///
+    /// Per-thread is what makes a call-count assertion sound: `select`/`rebalance` score entirely on
+    /// the calling thread, while `cargo test` runs tests on many threads in parallel. A process-global
+    /// counter would mix in every concurrently-running scoring test's calls, which no lock held by
+    /// only the measuring test can prevent.
     static SCORE_PEER_CALLS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
