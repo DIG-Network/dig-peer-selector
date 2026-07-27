@@ -4,6 +4,11 @@ All notable changes to this project are documented here.
 This project adheres to [Semantic Versioning](https://semver.org) and
 [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.6.0] - 2026-07-27
+
+### Chores
+- **deps:** Resolve dig-nat ^0.13 + dig-dht ^0.7 (cascade #1656 level 2) (#13)
+
 ## [0.5.2] - 2026-07-23
 
 ### Chores
