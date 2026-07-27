@@ -94,9 +94,33 @@
 # (`identity.rs`) and merely re-exported through dig-nat, and both dig-nat versions agree on
 # `dig-tls ^0.3`, so cargo unifies it and that re-export alone would not have been breaking. Resolving
 # each re-export to its defining crate — not reading the re-export list — is what makes this call honest.
+#
+# `dig-nat` 0.14.0 + `dig-dht` 0.8.0 (release-first cascade #1686) — the SECOND, unavoidable hop of the
+# same cascade, because 0.6.0 above was cut onto `^0.13`/`^0.7` before dig-nat 0.14 existed. A `0.x`
+# minor is semver-INCOMPATIBLE (`"0.13"` means `>=0.13.0, <0.14.0`), so those requirements could never
+# resolve 0.14.0/0.8.0 — and while this crate stayed on them, dig-node's tree resolved TWO `dig-nat` and
+# TWO `dig-dht` versions and failed to compile with `expected dig_nat::relay::RelayStatus, found
+# dig_nat::RelayStatus`. For a `0.x` dep bump, EVERY node on EVERY path from the dep to the final
+# consumer must be bumped; one un-bumped node forces duplicate resolution for the whole graph.
+#
+# No code migration was required, and this was VERIFIED at the published sources rather than assumed:
+# `dig-nat` 0.14.0 is purely additive over 0.13.0 (its public identifier set gains exactly
+# `ChunkLensAssembler`, `ChunkLensError`, `MAX_RESOURCE_CHUNK_COUNT` plus a new `RangeFrame` method, and
+# loses nothing), and `dig-dht` 0.8.0's `src/` is BYTE-IDENTICAL to 0.7.0's — a manifest-only release
+# carrying just its own `dig-nat = "0.14"` bump. Both surfaces this crate reads are untouched.
+#
+# Released as 0.6.0 -> 0.7.0 (breaking, per SemVer's 0.x minor-position convention) on the same
+# type-ownership rule as the 0.6.0 bump, re-derived against the 0.14.0/0.8.0 sources rather than
+# inherited: a dep bump over a re-exporting crate is breaking IFF the re-exported type is dep-OWNED.
+# Five of the six types this crate re-exports are dep-owned and therefore change identity for consumers:
+# `TraversalKind` is defined in dig-nat (`src/method/mod.rs`), and `ContentId` (`src/content.rs`) plus
+# `AddressKind` / `CandidateAddr` / `ProviderRecord` (all three in `src/record.rs`) are defined in
+# dig-dht. `PeerId` remains the one exception — it is defined in `dig-tls` (`src/identity.rs`) and merely
+# re-exported through dig-nat, and dig-nat 0.13 and 0.14 BOTH require `dig-tls = "0.3"`, so cargo unifies
+# it and `PeerId` alone would have justified only a patch.
 [package]
 name = "dig-peer-selector"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
 rust-version = "1.75.0"
 license = "Apache-2.0 OR MIT"
@@ -109,11 +133,11 @@ categories = ["network-programming"]
 [dependencies]
 # Peer identity (peer_id = SHA-256(TLS SPKI DER)) + the connection-class ladder (`TraversalKind`) the
 # selector reads observationally to seed class/relay priors. Re-used, never redefined (SPEC §1.3, §7.3).
-dig-nat = "0.13"
+dig-nat = "0.14"
 
 # The candidate feed: `ContentId` (what is fetched), `ProviderRecord` / `CandidateAddr` / `AddressKind`
 # (the DHT provider records mapped into candidates). Re-used, never redefined (SPEC §7.1, §11).
-dig-dht = "0.7"
+dig-dht = "0.8"
 
 # Read-only observability snapshots (§5.7) serialize for the agent-friendly/machine-consumable surface.
 serde = { version = "1", features = ["derive"] }
