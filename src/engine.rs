@@ -619,10 +619,9 @@ fn candidate_ids(candidates: &[Candidate]) -> Vec<PeerId> {
 mod tests {
     use super::*;
     use crate::config::SelectorConfig;
-    use crate::scoring::{SCORE_PEER_CALLS, SCORE_PEER_CALLS_LOCK};
+    use crate::scoring::score_peer_calls;
     use crate::types::{Candidate, OutcomeKind, OutcomeResult, TransferOutcome};
     use dig_dht::{CandidateAddr, ContentId};
-    use std::sync::atomic::Ordering;
 
     fn pid(b: u8) -> PeerId {
         PeerId::from_bytes([b; 32])
@@ -664,20 +663,49 @@ mod tests {
         // Mix in a couple of fresh cold candidates too (a realistic mixed pool).
         let candidates: Vec<Candidate> = (0..7u8).map(candidate).collect();
 
-        // SCORE_PEER_CALLS is process-global (shared across cargo test's parallel threads): serialize
-        // via the dedicated lock and measure a delta across just the `select` call, so a concurrently
-        // running test's own `score_peer` calls cannot pollute this measurement.
-        let _guard = SCORE_PEER_CALLS_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let before = SCORE_PEER_CALLS.load(Ordering::SeqCst);
+        // `select` scores on the CALLING thread, and the instrumentation counter is per-thread, so a
+        // delta across just this call counts exactly this `select`'s scoring work.
+        let before = score_peer_calls();
         let _ = sel.select(&ContentRequest::new(content(), 3), &candidates);
-        let calls = SCORE_PEER_CALLS.load(Ordering::SeqCst) - before;
+        let calls = score_peer_calls() - before;
         assert!(
             calls <= candidates.len() as u64,
             "score_peer must run at most once per pooled peer ({} peers), got {calls} calls \
              (a separate proven-bounds pre-pass would double-count the non-cold ones)",
             candidates.len()
+        );
+    }
+
+    /// Regression: the `score_peer` instrumentation counter must be PER-THREAD, so scoring performed
+    /// by another thread is invisible to a measuring test.
+    ///
+    /// The counter used to be a process-global `AtomicU64` guarded by a mutex that only the measuring
+    /// test acquired — which serializes nothing, because every other scoring test increments the
+    /// counter without taking that lock. Under `cargo test`'s default parallel threads that made
+    /// `select_scores_each_pooled_peer_at_most_once` fail intermittently (~1 run in 10) with an
+    /// inflated count. This asserts the property directly instead of hoping the race does not land:
+    /// another thread's scoring is performed to completion, and the measured delta must still see
+    /// only this thread's work.
+    #[test]
+    fn score_peer_instrumentation_is_per_thread() {
+        const FOREIGN_SCORES: usize = 100;
+
+        let before = score_peer_calls();
+        std::thread::spawn(|| {
+            let sel = PeerSelector::new(SelectorConfig::deterministic(1000, 5));
+            let candidates: Vec<Candidate> = (0..4u8).map(candidate).collect();
+            for _ in 0..FOREIGN_SCORES {
+                let _ = sel.select(&ContentRequest::new(content(), 4), &candidates);
+            }
+        })
+        .join()
+        .expect("foreign scoring thread panicked");
+
+        assert_eq!(
+            score_peer_calls() - before,
+            0,
+            "another thread's score_peer calls must not be visible to this thread's counter \
+             (a process-global counter leaks them and makes call-count assertions flaky)"
         );
     }
 }
