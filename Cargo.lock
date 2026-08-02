@@ -544,9 +544,9 @@ dependencies = [
 
 [[package]]
 name = "dig-dht"
-version = "0.9.0"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "723c3a5659f6dc47be3640e2da928fd3cb173d5aea3e36caf769d88359000327"
+checksum = "f1bb757c288434cfff45f1ce78a4110eacf67978862ca596c8df618e1004ebf5"
 dependencies = [
  "async-trait",
  "dig-ip",
@@ -588,9 +588,9 @@ dependencies = [
 
 [[package]]
 name = "dig-nat"
-version = "0.15.0"
+version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "90270aea6b4a11c80cc4b6230d87926eb0944a6911307aa3c7425134fd714dbf"
+checksum = "012ec3f2e579fe125aadde69168871b6c11a8c401c37d39507a5193ff14c0ba1"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -618,7 +618,7 @@ dependencies = [
 
 [[package]]
 name = "dig-peer-selector"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "dig-dht",
  "dig-nat",
