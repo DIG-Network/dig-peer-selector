@@ -67,19 +67,27 @@
 //!    active peers and the still-needed ranges to get a replacement subset (SPEC §5.5). On resume,
 //!    `select`/`rebalance` only the ranges NOT in `DownloadState::done_ranges` (SPEC §6.4).
 //!
-//! ## DigPeer hand-off — how consumers establish connections
+//! ## DigPeer hand-off — the connect step, handed back
 //!
-//! The selector returns *ranked peer identities* (each [`SelectedPeer`] carries a [`PeerId`]); it does
-//! NOT establish connections. The node is responsible for **connecting** to each selected peer via
-//! the [`dig-peer`] crate: construct a [`dig_peer::PeerTarget`] from the `peer_id` + addresses, then
-//! call [`dig_peer::DigPeer::connect`] to establish mTLS and get a [`dig_peer::Connected`] for the
-//! actual streams (SPEC §6.1, §11). The selector's role ends at selection; the transport is entirely
-//! the node's (and `dig-download`'s via `dig-nat`) responsibility.
+//! The selector returns *ranked peer identities*, and it still opens no socket. It does, however,
+//! hand back everything needed to open one: [`dial_plan`](PeerSelector::dial_plan) pairs each
+//! [`SelectedPeer`] with the [`PeerTarget`] that reaches it, built from the addresses the registry
+//! learned for that peer. Pass the target straight to `dig_peer::DigPeer::connect` (or
+//! `connect_with_runtime` to compose the full NAT ladder) — the target carries the `peer_id`, which
+//! the handshake PINS, so a different CA-valid peer cannot answer in place of the chosen one (#1283).
 //!
-//! [`dig-peer`]: https://github.com/DIG-Network/dig-peer
-//! [`dig_peer::PeerTarget`]: https://docs.rs/dig-peer/latest/dig_peer/struct.PeerTarget.html
-//! [`dig_peer::DigPeer::connect`]: https://docs.rs/dig-peer/latest/dig_peer/struct.DigPeer.html#method.connect
-//! [`dig_peer::Connected`]: https://docs.rs/dig-peer/latest/dig_peer/struct.Connected.html
+//! Consumers MUST NOT re-derive this mapping from their own candidate lists: a second implementation
+//! of the addressing is how two crates silently drift apart on which address they dial. For the same
+//! reason the candidate ordering itself is inherited from [`dig_dht::dial_candidates`] — kind filter,
+//! `host:port` dedup, bound and reserved IPv4 fallback slot included — rather than restated here.
+//!
+//! ```ignore
+//! let selection = selector.select(&request, &candidates);
+//! for (chosen, target) in selector.dial_plan(&selection, "mainnet") {
+//!     let peer = dig_peer::DigPeer::connect(&target, &node_cert, &nat_config).await?;
+//!     // ... fetch up to `chosen.max_concurrency` ranges from `peer`
+//! }
+//! ```
 //!
 //! Because `TransferOutcome`/`Selection` are defined here structurally, this crate does NOT depend on
 //! `dig-download` — avoiding a dependency cycle; the event→outcome mapping lives in the node adapter
@@ -95,6 +103,7 @@
 #![warn(missing_docs)]
 
 pub mod config;
+pub mod dial;
 pub mod engine;
 pub mod observe;
 pub mod pool_event;
@@ -106,6 +115,7 @@ pub mod types;
 // ---- The frozen public surface (SPEC §11) --------------------------------------------------------
 
 pub use config::{ClockSource, SelectorConfig, DEFAULT_REGISTRY_CAPACITY};
+pub use dial::peer_target;
 pub use engine::PeerSelector;
 pub use observe::{peer_id_hex, PeerSnapshot, SelectorSnapshot};
 pub use pool_event::{PoolEvent, PoolRemovalReason};
@@ -119,6 +129,10 @@ pub use types::{
 
 // ---- Re-used from the sibling crates (NOT redefined — SPEC §5, §11) ------------------------------
 
+/// The bound on how many candidate addresses one dial target carries, re-used from `dig-dht` — the
+/// crate that owns the dial-candidate ordering this crate inherits (SPEC §5.8). Never re-declared
+/// here: a copied constant is a rival implementation waiting to drift.
+pub use dig_dht::MAX_DIAL_CANDIDATES;
 /// The candidate/content types re-used from `dig-dht` (SPEC §7.1): what is fetched + how a provider
 /// is addressed.
 pub use dig_dht::{AddressKind, CandidateAddr, ContentId, ProviderRecord};
@@ -126,3 +140,6 @@ pub use dig_dht::{AddressKind, CandidateAddr, ContentId, ProviderRecord};
 pub use dig_nat::PeerId;
 /// The `dig-nat` connection-class ladder the selector reads observationally (SPEC §7.3).
 pub use dig_nat::TraversalKind;
+/// The dial target handed back for each selected peer, re-used from `dig-peer` (SPEC §5.8) — the
+/// `peer_id`-pinned input to `dig_peer::DigPeer::connect`.
+pub use dig_peer::PeerTarget;

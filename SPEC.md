@@ -512,6 +512,42 @@ side map's size MUST track the live registry population, not the cumulative coun
 attacker feeding a continuous stream of unique cold `peer_id`s would still grow unbounded state
 elsewhere in the selector.
 
+### 5.8 The dial hand-off (`dial_plan` / `peer_target`)
+
+The selector MUST expose the connect step it hands back as a `dig-peer` `PeerTarget`, so no consumer
+re-derives dial addressing:
+
+- `dial_plan(&Selection, network_id) -> Vec<(SelectedPeer, PeerTarget)>` returns one pair per chosen
+  peer, in **selection (rank) order**.
+- `peer_target(&PeerId, network_id) -> Option<PeerTarget>` answers for a single peer, and returns
+  `None` for a peer not in the registry: the selector MUST NOT invent reachability for an identity it
+  has never been told about.
+
+A target is built from the peer entry's learned candidate addresses (§2.1), and the candidate
+ordering is **inherited, never re-derived**:
+
+- Candidates whose host is not an **IP literal** are dropped first — DHT candidates are observed
+  socket addresses, so a hostname denotes a malformed record and this crate resolves no DNS. The
+  survivors are then passed to `dig_dht::dial_candidates`, which owns the ordering. This order is
+  normative: `dial_candidates` bounds the list, so filtering afterwards could let unusable hostnames
+  occupy cap slots and exclude a working IP literal.
+- The selector MUST NOT re-express the dialable-kind filter, the dedup by `host:port`, the bound, or
+  the fallback-slot reservation. Each is a property of that one function; a local copy is a rival
+  implementation, and a plain truncation in place of the reservation reintroduces the failure where a
+  holder advertising several IPv6 candidates yields a dial set containing no IPv4 at all.
+- The bound is `dig_dht::MAX_DIAL_CANDIDATES`, re-exported rather than re-declared, so a peer that
+  pads its advertised address list cannot turn one dial into an unbounded connect storm.
+- Address **family** order is therefore set by `dial_candidates` (IPv6-first, IPv4-fallback) and
+  applied again by the dialer against the local host's own families at dial time
+  ([CLAUDE.md §5.2](https://github.com/DIG-Network/dig_ecosystem)). This layer adds no ordering.
+- When no candidate survives, the target is **relay-only**: a selected peer is always handed back, so
+  it stays reachable by identity rather than silently unconnectable.
+
+The target carries the `peer_id`, and the handshake pins it — so the addresses a peer advertised
+remain a hint about *where* it might be, never evidence about *who* answers (§2.4, §9.1).
+
+---
+
 ---
 
 ## 6 · The feedback-loop contract with `dig-download`
@@ -624,17 +660,21 @@ selector opens no transport and owns no discovery (§1.2).
 
 ### 7.4 `dig-peer` — the connection hand-off
 
-- The selector's output is **ranked `PeerId`s** in a `Selection`: each `SelectedPeer` carries a
-  `peer_id` and a recommended `max_concurrency`. The selector **does not** establish connections (§1.2
-  boundary).
-- The host/executor (typically `dig-node`, via `dig-download`'s integration point) is responsible for
-  **connecting** to each selected peer:
-  1. Construct a [`dig_peer::PeerTarget`] from the ranked `peer_id` + the candidate's address(es).
-  2. Call [`dig_peer::DigPeer::connect`] to establish mTLS over `dig-nat` and obtain the connection.
-  3. Use the resulting [`dig_peer::Connected`] streams for the data transfer (via `dig-download`).
-- Connection establishment, NAT traversal, and transport are entirely the responsibility of `dig-peer`
-  and `dig-nat`; the selector is a pure decision layer and has no opinion on how the connection is made.
-  Its only contract is to rank peers and learn from measured outcomes (§5, §6).
+- The selector's output is **ranked `PeerId`s** in a `Selection`, each `SelectedPeer` carrying a
+  `peer_id` and a recommended `max_concurrency`. The selector **does not** establish connections
+  (§1.2 boundary) — but it MUST hand back everything needed to establish one, as a
+  [`dig_peer::PeerTarget`] (§5.8).
+- The host/executor (typically `dig-node`, via `dig-download`'s integration point) connects by:
+  1. Taking each `(SelectedPeer, PeerTarget)` pair from `dial_plan` (§5.8) in rank order.
+  2. Calling [`dig_peer::DigPeer::connect`] (or `connect_with_runtime` for the full NAT ladder) with
+     that target, which PINS the mTLS handshake to the target's `peer_id`.
+  3. Using the resulting connection's streams for the data transfer (via `dig-download`).
+- A consumer MUST NOT re-derive the `peer_id` → `PeerTarget` mapping from its own candidate list: a
+  second implementation of the addressing is a source of divergence between consumers on which
+  address a given peer is reached at.
+- Connection establishment, NAT traversal, and transport remain entirely the responsibility of
+  `dig-peer` and `dig-nat`; the selector opens no socket and has no opinion on how the connection is
+  made beyond naming the peer and its addresses.
 
 ### 7.5 `dig-node` (digstore) — the host
 
@@ -759,19 +799,21 @@ MSRV ≥ `1.75.0`):
   `rebalance(&ContentRequest, &[PeerId], &RangePlanDelta) -> Selection`,
   `record_outcome(&TransferOutcome)`, `on_pool_event(&PoolEvent)`,
   `on_connection_class(&PeerId, TraversalKind)`, `upsert_candidate(&Candidate)`,
-  `remove_peer(&PeerId)`, plus read-only observability (§5.7).
+  `remove_peer(&PeerId)`, `dial_plan(&Selection, &str) -> Vec<(SelectedPeer, PeerTarget)>`,
+  `peer_target(&PeerId, &str) -> Option<PeerTarget>` (§5.8), plus read-only observability (§5.7).
 - **Types:** `SelectorConfig` (§5.6), `ContentRequest` / `Candidate` / `Selection` / `SelectedPeer`
   (§5.1), `TransferOutcome` / `OutcomeKind` / `OutcomeResult` / `FailureReason` (§5.2),
   `RangePlanDelta` (§5.5), `PeerEntry` / `PeerQuality` / `Provenance` (§2–3, read-only snapshots),
   `PoolEvent` / `PoolRemovalReason` (§5.4 — mirrored byte-for-byte from `dig_gossip`).
 - **Re-used (not redefined):** `dig_nat::{PeerId, TraversalKind}`, `dig_dht::{ContentId,
-  ProviderRecord, CandidateAddr, AddressKind}`.
+  ProviderRecord, CandidateAddr, AddressKind, MAX_DIAL_CANDIDATES}`, `dig_peer::PeerTarget` (§5.8).
 - **Mirrored byte-for-byte (not re-used, per the §5.4 binding note):** `PoolEvent` /
   `PoolRemovalReason` — field-identical to `dig_gossip`'s, sourced locally because `dig-gossip` pulls
   the whole chia stack and its current git tip does not compile as a dependency.
 
-Dependency posture: depend on `dig-nat` and `dig-dht` for identity/candidate types (git-pinned bare
-form until they are on crates.io); **mirror** the `dig-gossip` `PoolEvent` shape locally rather than
+Dependency posture: depend on `dig-nat` and `dig-dht` for identity/candidate types, and on `dig-peer`
+(level 20, a reference-DOWN edge from this level-30 crate) for the `PeerTarget` hand-off (§5.8) —
+all from crates.io; **mirror** the `dig-gossip` `PoolEvent` shape locally rather than
 depending on `dig-gossip` (§5.4 binding note — keeps the tree minimal and the build green); do NOT
 depend on `dig-download` for types the loop can express structurally (avoid a dependency cycle — the
 outcome/event mapping lives in the host adapter, §6.2).
@@ -791,6 +833,7 @@ The frozen, testable statements of version 1. An implementation conforms iff all
 | SEL-05 | Scoring satisfies invariants A–G (§4.4): convergence to fast/reliable peers, anti-thundering-herd load-spread, P99 orientation, degradation adaptation, bounded exploration, determinism under a fixed seed, bounded work. |
 | SEL-06 | `record_outcome` updates the models in real time (per range, mid-transfer); `rebalance` re-queries the up-to-the-moment models for still-needed ranges, excluding saturated/failed active peers (§5.2–5.5). |
 | SEL-07 | The `dig-download` loop contract holds: the selector drives source choice; `RangeCompleted`/`RangeFailed`/`Completed`/`Failed` map to `record_outcome` as they stream; a `VerificationFailed` range is a hard penalty driving the source below cold peers; a pause is not a failure; resume selects only the remaining ranges (§6). |
+| SEL-12 | The connect step is handed back, not re-derived: `dial_plan` pairs each selected peer with a `dig_peer::PeerTarget` in rank order; the target's addresses are the entry's IP-literal candidates passed through `dig_dht::dial_candidates` (its kind filter, `host:port` dedup, `MAX_DIAL_CANDIDATES` bound and reserved fallback slot inherited, not re-expressed), relay-only when none survive, with family order left to that function and the dialer; `peer_target` returns `None` for an unknown peer (§5.8, §7.4). |
 | SEL-08 | Integration inputs are read-only hints/choices: DHT `find_providers` provider records are candidates (hints); gossip `PoolEvent`/pool snapshot feed the registry; `dig-nat` `TraversalKind` seeds class/relay priors; the selector opens no transport and runs no discovery/DHT/transfer (§1.2, §7). |
 | SEL-09 | Peers are proven only by a completed, verified mTLS transfer; identity is the transport-verified `peer_id`, never a payload field; there is no input path by which a peer raises its own score; a `Banned` peer is ineligible until re-added (§9). |
 | SEL-10 | Backwards-compatible & additive: no user-facing behavior knobs; no persisted on-disk format in v1; every change updates this SPEC in the same unit of work (§1.5, §10). |

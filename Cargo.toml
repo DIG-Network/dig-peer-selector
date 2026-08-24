@@ -140,7 +140,7 @@
 # crate's own logic moved.
 [package]
 name = "dig-peer-selector"
-version = "0.9.1"
+version = "0.9.2"
 edition = "2021"
 rust-version = "1.75.0"
 license = "Apache-2.0 OR MIT"
@@ -158,6 +158,14 @@ dig-nat = "0.20"
 # The candidate feed: `ContentId` (what is fetched), `ProviderRecord` / `CandidateAddr` / `AddressKind`
 # (the DHT provider records mapped into candidates). Re-used, never redefined (SPEC §7.1, §11).
 dig-dht = "0.12"
+
+# The ONE DIG Network peer client (L20): `DigPeer::connect` drives the full dig-nat ladder with the
+# handshake PINNED to the target's peer_id. The selector opens no socket, but it hands back the
+# `PeerTarget` that feeds that call (SPEC §5.8) — so the mapping from a chosen peer to the addresses
+# a caller dials lives HERE, once, instead of being re-derived by every consumer (#1283). L20 < L30,
+# so the edge is reference-DOWN and legal; dig-peer 0.12 resolves the SAME dig-nat 0.20 this crate
+# pins directly, so `PeerId`/`PeerTarget` are one type across the whole tree.
+dig-peer = "0.12"
 
 # Read-only observability snapshots (§5.7) serialize for the agent-friendly/machine-consumable surface.
 serde = { version = "1", features = ["derive"] }
