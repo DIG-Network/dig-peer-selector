@@ -480,6 +480,47 @@ impl PeerSelector {
         inner.prune_evicted_side_maps();
     }
 
+    /// The dial target for one known peer — its `peer_id` plus the candidate addresses the registry
+    /// has learned for it (SPEC §5.8). `None` when the peer is unknown here: the selector will not
+    /// invent reachability for an identity it has never been told about.
+    ///
+    /// Hand the result to `dig_peer::DigPeer::connect`; the target's `peer_id` pins that handshake,
+    /// so the peer that answers is the peer that was chosen (#1283).
+    pub fn peer_target(&self, peer: &PeerId, network_id: &str) -> Option<dig_peer::PeerTarget> {
+        let inner = self.inner.lock().expect("selector mutex poisoned");
+        inner
+            .registry
+            .get(peer)
+            .map(|entry| crate::dial::peer_target(entry.peer_id, &entry.addresses, network_id))
+    }
+
+    /// The connect step, handed back: each chosen peer paired with the `dig-peer` target to reach it,
+    /// in selection (rank) order (SPEC §5.8).
+    ///
+    /// This is the seam consumers take instead of re-deriving addressing from their own candidate
+    /// lists — one shared implementation of the mapping, so two consumers cannot drift apart on it.
+    /// A selected peer is always in the registry (selecting registers it), so the plan has one entry
+    /// per selected peer.
+    pub fn dial_plan(
+        &self,
+        selection: &Selection,
+        network_id: &str,
+    ) -> Vec<(SelectedPeer, dig_peer::PeerTarget)> {
+        let inner = self.inner.lock().expect("selector mutex poisoned");
+        selection
+            .peers
+            .iter()
+            .filter_map(|chosen| {
+                inner.registry.get(&chosen.peer_id).map(|entry| {
+                    (
+                        *chosen,
+                        crate::dial::peer_target(entry.peer_id, &entry.addresses, network_id),
+                    )
+                })
+            })
+            .collect()
+    }
+
     /// Manually upsert a candidate (seed / bootstrap feed, SPEC §5.4). A fresh peer is cold.
     pub fn upsert_candidate(&self, candidate: &Candidate) {
         let now = self.now();
