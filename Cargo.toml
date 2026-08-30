@@ -140,7 +140,7 @@
 # crate's own logic moved.
 [package]
 name = "dig-peer-selector"
-version = "0.10.0"
+version = "0.11.0"
 edition = "2021"
 rust-version = "1.75.0"
 license = "Apache-2.0 OR MIT"
@@ -168,7 +168,7 @@ dig-nat = "0.21"
 
 # The candidate feed: `ContentId` (what is fetched), `ProviderRecord` / `CandidateAddr` / `AddressKind`
 # (the DHT provider records mapped into candidates). Re-used, never redefined (SPEC §7.1, §11).
-dig-dht = "0.13"
+dig-dht = "0.15"
 
 # The ONE DIG Network peer client (L20): `DigPeer::connect` drives the full dig-nat ladder with the
 # handshake PINNED to the target's peer_id. The selector opens no socket, but it hands back the
