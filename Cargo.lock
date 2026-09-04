@@ -717,7 +717,7 @@ dependencies = [
 
 [[package]]
 name = "dig-peer-selector"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "dig-dht",
  "dig-nat",
