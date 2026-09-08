@@ -64,10 +64,14 @@ jobs:
 
       - name: Generate changelog
         if: steps.ver.outputs.skip == 'false'
-        run: git-cliff --config cliff.toml --tag "${{ steps.ver.outputs.tag }}" --output CHANGELOG.md
+        env:
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: git-cliff --config cliff.toml --tag "$TAG" --output CHANGELOG.md
 
       - name: Commit changelog, tag, push
         if: steps.ver.outputs.skip == 'false'
+        env:
+          TAG: ${{ steps.ver.outputs.tag }}
         shell: bash
         run: |
           set -euo pipefail
@@ -75,8 +79,8 @@ jobs:
           git config user.email "release-bot@users.noreply.github.com"
           git add CHANGELOG.md
           # `chore(release):` prefix so this workflow skips its own push (loop guard above).
-          git commit -m "chore(release): ${{ steps.ver.outputs.tag }}" || echo "changelog unchanged"
-          git tag -a "${{ steps.ver.outputs.tag }}" -m "Release ${{ steps.ver.outputs.tag }}"
+          git commit -m "chore(release): $TAG" || echo "changelog unchanged"
+          git tag -a "$TAG" -m "Release $TAG"
           git push origin "HEAD:main"
-          git push origin "${{ steps.ver.outputs.tag }}"
-          echo "Pushed changelog commit + ${{ steps.ver.outputs.tag }} — deploy-on-tag will fire."
+          git push origin "$TAG"
+          echo "Pushed changelog commit + $TAG — deploy-on-tag will fire."
