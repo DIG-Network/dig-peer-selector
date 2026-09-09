@@ -140,7 +140,7 @@
 # crate's own logic moved.
 [package]
 name = "dig-peer-selector"
-version = "0.11.1"
+version = "0.12.0"
 edition = "2021"
 rust-version = "1.75.0"
 license = "Apache-2.0 OR MIT"
@@ -174,9 +174,16 @@ dig-dht = "0.15"
 # handshake PINNED to the target's peer_id. The selector opens no socket, but it hands back the
 # `PeerTarget` that feeds that call (SPEC §5.8) — so the mapping from a chosen peer to the addresses
 # a caller dials lives HERE, once, instead of being re-derived by every consumer (#1283). L20 < L30,
-# so the edge is reference-DOWN and legal; dig-peer 0.13 resolves the SAME dig-nat 0.21 this crate
+# so the edge is reference-DOWN and legal; dig-peer 0.14 resolves the SAME dig-nat 0.21 this crate
 # pins directly, so `PeerId`/`PeerTarget` are one type across the whole tree.
-dig-peer = "0.13"
+#
+# `0.13` -> `0.14` (dig_ecosystem#3269): dig-peer's own diff versus 0.13.1 is manifest-only (its
+# version, its dig-rpc-protocol requirement 0.10 -> 0.11, and a comment) -- no dig-nat/dig-tls/chia
+# edge moved, gated and confirmed by two independent reviews. dig-node-core needs the reward RPC
+# methods only dig-rpc-protocol 0.11.0 carries, and dig-peer must be on that line to avoid a second
+# dig-rpc-protocol resolving in the tree; this crate follows so its own dig-peer requirement can
+# still be satisfied. This crate does not itself depend on dig-rpc-protocol.
+dig-peer = "0.14"
 
 # Read-only observability snapshots (§5.7) serialize for the agent-friendly/machine-consumable surface.
 serde = { version = "1", features = ["derive"] }
