@@ -4,6 +4,11 @@ All notable changes to this project are documented here.
 This project adheres to [Semantic Versioning](https://semver.org) and
 [Conventional Commits](https://www.conventionalcommits.org).
 
+## [0.13.0] - 2026-09-13
+
+### Chores
+- **deps:** Adopt dig-peer 0.15 (dig_ecosystem#3269 cascade leg 4/4) (#24)
+
 ## [0.12.0] - 2026-09-09
 
 ### Chores
