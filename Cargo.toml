@@ -140,7 +140,7 @@
 # crate's own logic moved.
 [package]
 name = "dig-peer-selector"
-version = "0.13.0"
+version = "0.14.0"
 edition = "2021"
 rust-version = "1.75.0"
 license = "Apache-2.0 OR MIT"
@@ -185,7 +185,41 @@ dig-dht = "0.15"
 # still be satisfied. This crate does not itself depend on dig-rpc-protocol.
 # `0.14` -> `0.15` (dig_ecosystem#3269 cascade leg 4/4): dig-peer 0.15 adopts dig-rpc-protocol
 # ^0.12, landing that transitively here with no direct dependency added.
-dig-peer = "0.15"
+#
+# `0.15` -> `0.16` (dig_ecosystem#3246): dig-peer 0.16 adopts dig-rpc-protocol ^0.14, again landing
+# transitively here with no direct dependency added. THIS CRATE IS A HARD BLOCKER ON THAT CASCADE
+# EVEN THOUGH IT HAS NO EDGE TO dig-rpc-protocol AT ALL -- but NOT for the reason that first
+# suggests itself, and the wrong reason is worth writing down because it is the one a reader
+# reconstructs unaided.
+#
+# THE ARGUMENT THAT DOES NOT HOLD. `dig_peer::PeerTarget` does cross this crate's public API (the
+# `pub use` in src/lib.rs, and `Engine::peer_target` / `Engine::peer_targets` in src/engine.rs
+# return it), so it looks like two dig-peer copies must yield an E0308 at `DigPeer::connect`. They
+# do not. `PeerTarget` is not dig-peer's type: dig-peer re-exports it from dig-nat
+# (`pub use dig_nat::{.., PeerTarget, ..}` at dig-peer src/lib.rs:70), and dig-peer 0.15.0 and
+# 0.16.0 both require `dig-nat ^0.21`. dig-nat therefore stays a SINGLE copy and both dig-peer
+# copies re-export the SAME `dig_nat::PeerTarget`. There is no type error on this seam. Checked
+# against the published 0.15.0/0.16.0 manifests, not assumed.
+#
+# WHAT ACTUALLY BLOCKS. A 0.x MINOR is semver-INCOMPATIBLE, so a consumer requiring `dig-peer
+# ^0.16` while this crate requires `^0.15` resolves TWO dig-peer copies -- and dig-peer is not a
+# type bag, it is the mTLS peer CLIENT. Two copies means two independently compiled connect
+# ladders and two sealing implementations, with `SealingIdentity` and replay-guard state not
+# shared between them, at the exact point where dig-node's `ModuleTransport` and dig-download's
+# `NatRangeTransport` are supposed to be dialling through ONE client. That is a real defect the
+# compiler cannot see, which is why dig-node asserts it instead:
+# `the_peer_client_and_pull_engine_are_not_duplicated` requires exactly one locked `dig-peer` AND
+# one `dig-peer-selector`, and a stale requirement here turns it red. It is easy to misread a test
+# failing where nothing failed to compile as a flake. It is not one -- the tripwire is correct and
+# it is doing its job. This crate was the sole source of that duplicate once before, in the #1674
+# cascade, for dig-nat and dig-dht.
+#
+# MINOR rather than patch, and NOT because of `PeerTarget`: requiring a semver-incompatible
+# dig-peer changes the resolved graph for every consumer, since a consumer pinned to `dig-peer
+# ^0.15` can no longer take this crate without picking up a duplicate. That is breaking under 0.x,
+# and it matches this crate's own history -- 0.11.0, 0.12.0 and 0.13.0 were each a MINOR cut for a
+# dependency bump alone.
+dig-peer = "0.16"
 
 # Read-only observability snapshots (§5.7) serialize for the agent-friendly/machine-consumable surface.
 serde = { version = "1", features = ["derive"] }
