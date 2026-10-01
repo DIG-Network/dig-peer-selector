@@ -140,7 +140,7 @@
 # crate's own logic moved.
 [package]
 name = "dig-peer-selector"
-version = "0.14.0"
+version = "0.15.0"
 edition = "2021"
 rust-version = "1.75.0"
 license = "Apache-2.0 OR MIT"
@@ -219,7 +219,10 @@ dig-dht = "0.15"
 # ^0.15` can no longer take this crate without picking up a duplicate. That is breaking under 0.x,
 # and it matches this crate's own history -- 0.11.0, 0.12.0 and 0.13.0 were each a MINOR cut for a
 # dependency bump alone.
-dig-peer = "0.16"
+#
+# `0.16` -> `0.17` (dig_ecosystem#3442): dig-peer 0.17 adopts dig-rpc-protocol ^0.15, landing
+# transitively here with no direct dependency added.
+dig-peer = "0.17"
 
 # Read-only observability snapshots (§5.7) serialize for the agent-friendly/machine-consumable surface.
 serde = { version = "1", features = ["derive"] }
